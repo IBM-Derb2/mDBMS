@@ -30,3 +30,8 @@ class DataRetrieval:
 
     def wants_all_columns(self) -> bool:
         return self.columns is None or len(self.columns) == 0
+
+@dataclass
+class DataDeletion:
+    table: str
+    conditions: Optional[List[Condition]] = None
