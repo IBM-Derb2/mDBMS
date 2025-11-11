@@ -1,8 +1,7 @@
 from typing import Any, Dict, Set, Union
 from dataclasses import dataclass, field
 
-from .strategy_interface import ConcurrencyStrategy
-from ..classes import Response
+from .strategy_interface import ConcurrencyStrategy, Response
 
 
 @dataclass

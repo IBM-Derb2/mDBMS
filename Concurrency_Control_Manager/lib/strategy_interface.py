@@ -1,6 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Any
-from ..classes import Response
+from typing import Any, Dict, Set, Union
+from dataclasses import dataclass, field
+
+@dataclass
+class Action:
+    action: Union['write', 'read']
+
+@dataclass
+class Response:
+    allowed: bool
+    transaction_id: int
 
 # ABC = Abstract Base Class
 class ConcurrencyStrategy(ABC):

@@ -3,14 +3,6 @@ from typing import Any, Union
 from .lib.strategy_interface import ConcurrencyStrategy
 from .lib.lock_based_strategy import LockBasedStrategy
 
-@dataclass
-class Action:
-    action: Union['write', 'read']
-
-@dataclass
-class Response:
-    allowed: bool
-    transaction_id: int
 
 class ConcurrencyControlManager:
     def __init__(self):
