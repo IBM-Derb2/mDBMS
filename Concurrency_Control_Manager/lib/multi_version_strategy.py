@@ -59,8 +59,56 @@ class MultiVersionStrategy(ConcurrencyStrategy):
 
 
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
-        print(f"[MVCCStrategy Mock] Validasi '{action}' pada '{obj}' untuk TS: {transaction_id}")
-        return Response(allowed=True, transaction_id=transaction_id)
+        object_id = self._get_object_id(obj)
+        action_upper = action.strip().upper()
+        TS_T = transaction_id
+
+        # Validasi untuk READ
+        if action_upper == 'READ':
+            # Jika objek belum punya versi sama sekali, izinkan (akan baca versi kosong/default)
+            if object_id not in self.version_store or len(self.version_store[object_id]) == 0:
+                print(f"[MVCCStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (belum ada versi)")
+                return Response(allowed=True, transaction_id=transaction_id)
+
+            # Cari versi yang tepat: versi dengan created_ts <= TS_T dan expired_ts > TS_T
+            versions_list = self.version_store[object_id]
+            found_version = None
+
+            for version in reversed(versions_list):
+                if version.created_ts <= TS_T < version.expired_ts:
+                    found_version = version
+                    break
+
+            if found_version:
+                print(f"[MVCCStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (versi ditemukan: created={found_version.created_ts}, expired={found_version.expired_ts})")
+                return Response(allowed=True, transaction_id=transaction_id)
+            else:
+                # Cari versi terakhir sebelum TS_T (versi dengan created_ts terbesar yang < TS_T dan sudah expired)
+                fallback_version = None
+                for version in reversed(versions_list):
+                    if version.created_ts < TS_T:
+                        fallback_version = version
+                        break
+
+                if fallback_version:
+                    print(f"[MVCCStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (baca versi lama: created={fallback_version.created_ts}, expired={fallback_version.expired_ts})")
+                    return Response(allowed=True, transaction_id=transaction_id)
+                else:
+                    # Tidak ada versi yang bisa dibaca (semua versi lebih baru dari TS_T)
+                    print(f"[MVCCStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DITOLAK (semua versi lebih baru dari TS ini)")
+                    return Response(allowed=False, transaction_id=transaction_id)
+
+        # Validasi untuk WRITE
+        elif action_upper == 'WRITE':
+            # Di MVCC, WRITE selalu membuat versi baru, jadi biasanya selalu diizinkan
+            # Namun, perlu cek apakah ada konflik dengan versi yang sedang dibaca transaksi lain
+
+            # Implementasi sederhana: izinkan WRITE, akan membuat versi baru
+            print(f"[MVCCStrategy] Validasi WRITE pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (akan membuat versi baru)")
+            return Response(allowed=True, transaction_id=transaction_id)
+
+        else:
+            raise ValueError(f"Aksi unknown '{action}'. Gunakan 'read' atau 'write'.")
 
 
     def end_transaction(self, transaction_id: int):
