@@ -1,13 +1,14 @@
 from typing import Any
 from .transaction_model import TransactionManager, TransactionStatus, Transaction
 from .strategy_interface import ConcurrencyStrategy, Response
-
+from end_transaction import EndTransactionManager, EndTransactionResult
 
 class TransactionCoordinator:
 
     def __init__(self, tx_manager: TransactionManager, strategy: ConcurrencyStrategy):
         self.tx_manager = tx_manager
         self.strategy = strategy
+        self.end_tx_manager = EndTransactionManager(tx_manager, strategy)
 
     def execute_operation(self, obj: Any, transaction_id: int, action: str):
         tx = self._validate_active_transaction(transaction_id)
@@ -27,30 +28,14 @@ class TransactionCoordinator:
         return self.strategy.validate_object(obj, transaction_id, action)
 
     def commit(self, transaction_id: int):
-        try:
-            tx = self.tx_manager.get_transaction(transaction_id)
-            if tx and tx.status == TransactionStatus.ACTIVE:
-                self.tx_manager.mark_partially_committed(transaction_id)
-
-            self.tx_manager.commit_transaction(transaction_id)
-            self.strategy.end_transaction(transaction_id)
-            self.tx_manager.terminate_transaction(transaction_id)
-
-        except Exception as e:
-            self.abort(transaction_id, f"Commit failed: {e}")
-            raise
+        report = self.end_tx_manager.end_transaction(transaction_id, is_commit=True)
+        if report.result != EndTransactionResult.SUCCESS:
+            raise Exception(f"Commit failed: {report.validation_errors}")
 
     def abort(self, transaction_id: int, reason: str = "User requested"):
-        tx = self.tx_manager.get_transaction(transaction_id)
-        if not tx:
-            return
-
-        if tx.status == TransactionStatus.ACTIVE:
-            self.tx_manager.fail_transaction(transaction_id, reason)
-
-        self.tx_manager.abort_transaction(transaction_id)
-        self.strategy.end_transaction(transaction_id)
-        self.tx_manager.terminate_transaction(transaction_id)
+        report = self.end_tx_manager.end_transaction(transaction_id, is_commit=False)
+        if report.result != EndTransactionResult.SUCCESS:
+            print(f"[Warning] Abort TX {transaction_id} selesai dengan warning: {report.validation_errors}")
 
     def _validate_active_transaction(self, transaction_id: int) -> Transaction:
         tx = self.tx_manager.get_transaction(transaction_id)
