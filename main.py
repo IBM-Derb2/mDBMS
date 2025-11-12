@@ -1,6 +1,6 @@
  
 from Query_Processor.classes import QueryProcessor
-from Query_Optimizer.classes import OptimizationEngine
+from Query_Optimizer.optimization_engine import OptimizationEngine
 from Concurrency_Control_Manager.classes import ConcurrencyControlManager
 from Storage_Manager.classes import StorageEngine
 from Failure_Recovery.classes import FailureRecovery

@@ -174,7 +174,7 @@ class QueryProcessor:
         
         # Dapatkan query plan
         query_plan = self.optimizer.optimize_query(parsed_query)
-        print(f"[QP] Got optimized plan: {query_plan.plan_details}")
+        # print(f"[QP] Got optimized plan: {query_plan.plan_details}")
 
         # Validasi objek ke Concurrency Control
         table_name = self._extract_table_name(query)
@@ -189,7 +189,7 @@ class QueryProcessor:
             raise Exception("Transaction aborted by Concurrency Control Manager.")
 
         # Ambil data dari Storage Manager
-        data_retrieval_request = f"DataRetrieval for: {query_plan.query_str}"
+        data_retrieval_request = f"DataRetrieval for: {query_plan.query}"
         rows = self.storage_manager.read_block(data_retrieval_request)
         print(f"[QP] Fetched data from Storage Manager: {rows.data}")
 
@@ -253,7 +253,7 @@ class QueryProcessor:
         if not response.allowed:
             raise Exception("Transaction aborted by Concurrency Control Manager.")
             
-        data_write_request = f"DataWrite for: {query_plan.query_str}"
+        data_write_request = f"DataWrite for: {query_plan.query}"
         affected_rows = self.storage_manager.write_block(data_write_request)
         
         message = f"UPDATE executed. {affected_rows} rows affected."
@@ -277,7 +277,7 @@ class QueryProcessor:
         if not response.allowed:
             raise Exception("Transaction aborted by Concurrency Control Manager.")
             
-        data_deletion_request = f"DataDeletion for: {query_plan.query_str}"
+        data_deletion_request = f"DataDeletion for: {query_plan.query}"
         affected_rows = self.storage_manager.delete_block(data_deletion_request)
         
         message = f"DELETE executed. {affected_rows} rows affected."
@@ -301,7 +301,7 @@ class QueryProcessor:
         if not response.allowed:
             raise Exception("Transaction aborted by Concurrency Control Manager.")
             
-        data_write_request = f"DataWrite for: {query_plan.query_str}"
+        data_write_request = f"DataWrite for: {query_plan.query}"
         affected_rows = self.storage_manager.write_block(data_write_request)
         
         message = f"INSERT executed. {affected_rows} rows affected."
@@ -327,7 +327,7 @@ class QueryProcessor:
         
         # DDL memanggil metode di Storage Manager
         # untuk mock, gunakan write_block
-        data_write_request = f"DDL_CREATE for: {query_plan.query_str}"
+        data_write_request = f"DDL_CREATE for: {query_plan.query}"
         affected_rows = self.storage_manager.write_block(data_write_request) # Asumsi 0
         
         message = "CREATE TABLE executed."
@@ -351,7 +351,7 @@ class QueryProcessor:
         if not response.allowed:
             raise Exception("Transaction aborted by Concurrency Control Manager.")
             
-        data_deletion_request = f"DDL_DROP for: {query_plan.query_str}"
+        data_deletion_request = f"DDL_DROP for: {query_plan.query}"
         affected_rows = self.storage_manager.delete_block(data_deletion_request) # Asumsi 0
         
         message = "DROP TABLE executed."
