@@ -58,8 +58,46 @@ class TimestampBasedStrategy(ConcurrencyStrategy):
 
 
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
-        print(f"[TimestampStrategy Mock] Validasi '{action}' pada '{obj}' untuk TS: {transaction_id}")
-        return Response(allowed=True, transaction_id=transaction_id)
+        object_id = self._get_object_id(obj)
+        action_upper = action.strip().upper()
+        TS_T = transaction_id
+
+        # Jika objek belum pernah diakses, aksi diizinkan
+        if object_id not in self.timestamp_table:
+            print(f"[TimestampStrategy] Validasi '{action}' pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (objek baru)")
+            return Response(allowed=True, transaction_id=transaction_id)
+
+        entry = self.timestamp_table[object_id]
+
+        # Validasi untuk READ
+        if action_upper == 'READ':
+            # Aturan: TS(T) >= W-TS(X)
+            # Transaksi hanya boleh membaca jika timestamp-nya >= timestamp terakhir yang menulis
+            if TS_T >= entry.W_TS:
+                print(f"[TimestampStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (TS >= W-TS={entry.W_TS})")
+                return Response(allowed=True, transaction_id=transaction_id)
+            else:
+                # TS(T) < W-TS(X) → transaksi terlambat, harus di-abort
+                print(f"[TimestampStrategy] Validasi READ pada '{object_id}' untuk TS {TS_T}: DITOLAK (TS < W-TS={entry.W_TS})")
+                return Response(allowed=False, transaction_id=transaction_id)
+
+        # Validasi untuk WRITE
+        elif action_upper == 'WRITE':
+            # Aturan: TS(T) >= R-TS(X) dan TS(T) >= W-TS(X)
+            # Transaksi hanya boleh menulis jika timestamp-nya >= timestamp terakhir yang membaca DAN menulis
+            if TS_T >= entry.R_TS and TS_T >= entry.W_TS:
+                print(f"[TimestampStrategy] Validasi WRITE pada '{object_id}' untuk TS {TS_T}: DIIZINKAN (TS >= R-TS={entry.R_TS} dan W-TS={entry.W_TS})")
+                return Response(allowed=True, transaction_id=transaction_id)
+            else:
+                # Transaksi terlambat, harus di-abort
+                if TS_T < entry.R_TS:
+                    print(f"[TimestampStrategy] Validasi WRITE pada '{object_id}' untuk TS {TS_T}: DITOLAK (TS < R-TS={entry.R_TS})")
+                else:
+                    print(f"[TimestampStrategy] Validasi WRITE pada '{object_id}' untuk TS {TS_T}: DITOLAK (TS < W-TS={entry.W_TS})")
+                return Response(allowed=False, transaction_id=transaction_id)
+
+        else:
+            raise ValueError(f"Aksi unknown '{action}'. Gunakan 'read' atau 'write'.")
 
 
     def end_transaction(self, transaction_id: int):
