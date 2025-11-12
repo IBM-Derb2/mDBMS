@@ -226,25 +226,43 @@ class QueryParsers(BaseParser):
         """Parse ORDER BY clause"""
         self._expect_keyword('ORDER')
         self._expect_keyword('BY')
+        start_pos = self.position
 
-        # Parse column
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
-            raise ValueError(
-                f"Expected column name in ORDER BY, got '{self.current_token.value}'")
-
-        column = self.current_token.value
-        self._advance()
-
-        # Parse ASC/DESC
-        direction = 'ASC'
-        if self._match_keyword('ASC'):
+        columns = []
+        directions = []
+        while True:
+            # Parse column token (optionally qualified e.g., alias.column)
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
+                raise ValueError(
+                    f"Expected column name in ORDER BY, got '{bad}'")
+            column_name = self.current_token.value
             self._advance()
-        elif self._match_keyword('DESC'):
-            direction = 'DESC'
-            self._advance()
-
-        col_node = QueryTree(type='COLUMN', val=column)
-        return QueryTree(type='ORDER_BY', val=direction, childs=[col_node])
+            if self._match_punctuation('.'):
+                self._advance()
+                if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                    bad = self.current_token.value if self.current_token else 'EOF'
+                    raise ValueError(
+                        f"Expected column name after '.', got '{bad}'")
+                column_name = column_name + '.' + self.current_token.value
+                self._advance()
+            direction = 'ASC'
+            if self._match_keyword('ASC'):
+                self._advance()
+            elif self._match_keyword('DESC'):
+                direction = 'DESC'
+                self._advance()
+            columns.append(QueryTree(type='COLUMN', val=column_name))
+            directions.append(direction)
+            if self._match_punctuation(','):
+                self._advance()
+                continue
+            else:
+                break
+        order_children = []
+        for col, dirn in zip(columns, directions):
+            order_children.append(QueryTree(type='ORDER_ITEM', val=dirn, childs=[col]))
+        return QueryTree(type='ORDER_BY', val='ORDER_BY', childs=order_children)
 
     def _parse_limit_clause(self) -> QueryTree:
         """Parse LIMIT clause"""
