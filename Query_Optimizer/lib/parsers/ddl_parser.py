@@ -31,75 +31,134 @@ class DDLParser(BaseParser):
 
         return QueryTree(type='CREATE_TABLE', val='CREATE_TABLE', childs=[table_node, columns_node])
 
+    def _parse_foreign_key_constraint(self) -> QueryTree:
+        self._expect_keyword('FOREIGN')
+        self._expect_keyword('KEY')  
+        
+        self._expect_punctuation('(')
+
+        local_col = self.current_token.value 
+        self._advance() 
+        self._expect_punctuation(')')
+        
+        self._expect_keyword('REFERENCES')
+        
+        ref_table = self.current_token.value
+        self._advance()
+        
+        self._expect_punctuation('(')
+        ref_col = self.current_token.value
+        self._advance()
+        self._expect_punctuation(')')
+        
+        # Buat node khusus untuk Foreign Key
+        fk_node = QueryTree(type='FOREIGN_KEY_CONSTRAINT', val=local_col)
+        fk_node.childs.append(QueryTree(type='REFERENCES_TABLE', val=ref_table))
+        fk_node.childs.append(QueryTree(type='REFERENCES_COLUMN', val=ref_col))
+        
+        return fk_node
+
+    def _parse_table_primary_key(self) -> QueryTree:
+        """
+        Mem-parsing: PRIMARY KEY (col1, col2, ...)
+        Kita asumsikan token 'PRIMARY' sudah di-match.
+        """
+        self._expect_keyword('PRIMARY') 
+        self._expect_keyword('KEY')   
+        
+        self._expect_punctuation('(')
+        
+        pk_cols = []
+        while True:
+            col_name = self.current_token.value
+            self._advance()
+            pk_cols.append(QueryTree(type='IDENTIFIER', val=col_name))
+            
+            if self._match_punctuation(','):
+                self._advance()
+            elif self.current_token.value == ')':
+                break
+            else:
+                raise ValueError("Expected ',' or ')' in PRIMARY KEY definition")
+        
+        self._expect_punctuation(')')
+        
+        return QueryTree(type='PRIMARY_KEY_CONSTRAINT', val='TABLE_PK', childs=pk_cols)
+    
     def _parse_column_definitions(self) -> QueryTree:
         """Parse column definitions in CREATE TABLE"""
         columns = []
 
         while True:
-            # Parse column name
-            if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
-                break  # Might be a constraint
+            if self._match_keyword('FOREIGN'):
+                # Jika token-nya 'FOREIGN', panggil parser khusus FK
+                fk_node = self._parse_foreign_key_constraint()
+                columns.append(fk_node)
+                
+            elif self._match_keyword('PRIMARY'):
+                # Jika token-nya 'PRIMARY', panggil parser khusus PK
+                pk_node = self._parse_table_primary_key()
+                columns.append(pk_node)
+            
+            elif self._match_keyword('CONSTRAINT'):
+                raise NotImplementedError("Parsing 'CONSTRAINT' belum didukung")
 
-            col_name = self.current_token.value
-            self._advance()
-
-            # Parse data type
-            if not self._match_keyword('INTEGER') and not self._match_keyword('INT') and \
-               not self._match_keyword('FLOAT') and not self._match_keyword('CHAR') and \
-               not self._match_keyword('VARCHAR') and not self._match_keyword('TEXT') and \
-               not self._match_keyword('DATE') and not self._match_keyword('TIMESTAMP'):
-                # Check if it's a constraint keyword
-                if self._match_keyword('PRIMARY') or self._match_keyword('FOREIGN') or \
-                   self._match_keyword('CONSTRAINT'):
-                    # This is a table constraint, not a column definition
-                    # For now, we'll skip constraint parsing
-                    break
-                raise ValueError(
-                    f"Expected data type, got '{self.current_token.value}'")
-
-            data_type = self.current_token.value
-            self._advance()
-
-            # Parse size for CHAR/VARCHAR
-            size = None
-            if self._match_punctuation('('):
+            elif self.current_token.type == 'IDENTIFIER':                
+                col_name = self.current_token.value
                 self._advance()
-                if self.current_token.type != 'NUMBER':
+
+                if not self._match_keyword('INTEGER') and not self._match_keyword('INT') and \
+                   not self._match_keyword('FLOAT') and not self._match_keyword('CHAR') and \
+                   not self._match_keyword('VARCHAR') and not self._match_keyword('TEXT') and \
+                   not self._match_keyword('DATE') and not self._match_keyword('TIMESTAMP'):
+                    
                     raise ValueError(
-                        f"Expected size, got '{self.current_token.value}'")
-                size = self.current_token.value
+                        f"Expected data type after column '{col_name}', got '{self.current_token.value}'")
+                
+                data_type = self.current_token.value
                 self._advance()
-                self._expect_punctuation(')')
 
-            # Parse column constraints (PRIMARY KEY, etc.)
-            constraints = []
-            while self._match_keyword('PRIMARY') or self._match_keyword('FOREIGN') or \
-                    self._match_keyword('UNIQUE') or self._match_keyword('NOT'):
-                if self._match_keyword('PRIMARY'):
+                size = None
+                if self._match_punctuation('('):
                     self._advance()
-                    self._expect_keyword('KEY')
-                    constraints.append(
-                        QueryTree(type='CONSTRAINT', val='PRIMARY_KEY'))
-                elif self._match_keyword('UNIQUE'):
+                    if self.current_token.type != 'NUMBER':
+                        raise ValueError(
+                            f"Expected size, got '{self.current_token.value}'")
+                    size = self.current_token.value
                     self._advance()
-                    constraints.append(
-                        QueryTree(type='CONSTRAINT', val='UNIQUE'))
-                elif self._match_keyword('NOT'):
-                    self._advance()
-                    self._expect_keyword('NULL')
-                    constraints.append(
-                        QueryTree(type='CONSTRAINT', val='NOT_NULL'))
-                elif self._match_keyword('FOREIGN'):
-                    # Skip FOREIGN KEY parsing for now
-                    break
+                    self._expect_punctuation(')')
 
-            type_val = data_type if not size else f"{data_type}({size})"
-            type_node = QueryTree(type='DATA_TYPE', val=type_val)
+                constraints = []
+                while self._match_keyword('PRIMARY') or self._match_keyword('UNIQUE') or self._match_keyword('NOT'):
+                    if self._match_keyword('PRIMARY'):
+                        self._advance()
+                        self._expect_keyword('KEY')
+                        constraints.append(
+                            QueryTree(type='CONSTRAINT', val='PRIMARY_KEY'))
+                    elif self._match_keyword('UNIQUE'):
+                        self._advance()
+                        constraints.append(
+                            QueryTree(type='CONSTRAINT', val='UNIQUE'))
+                    elif self._match_keyword('NOT'):
+                        self._advance()
+                        self._expect_keyword('NULL')
+                        constraints.append(
+                            QueryTree(type='CONSTRAINT', val='NOT_NULL'))
+                
+                # Buat node
+                type_val = data_type if not size else f"{data_type}({size})"
+                type_node = QueryTree(type='DATA_TYPE', val=type_val)
 
-            childs = [type_node] + constraints
-            col_def = QueryTree(type='COLUMN_DEF', val=col_name, childs=childs)
-            columns.append(col_def)
+                childs = [type_node] + constraints
+                col_def = QueryTree(type='COLUMN_DEF', val=col_name, childs=childs)
+                columns.append(col_def)
 
+            else:
+                # Jika bukan 'FOREIGN', 'PRIMARY', atau 'IDENTIFIER',
+                # berarti sudah selesai (kemungkinan ')' )
+                break
+
+            # Cek koma pemisah
             if self._match_punctuation(','):
                 self._advance()
             else:

@@ -59,6 +59,9 @@ class SQLParser(BaseParser):
         else:
             raise ValueError(
                 f"Unsupported query type: {self.current_token.value}")
+        
+        if self.current_token and self.current_token.value == ';':
+            self._advance()
 
         # Verify we've consumed all tokens (except EOF)
         if self.current_token and self.current_token.type != 'EOF':
