@@ -55,7 +55,7 @@ class BufferManager:
         self._update_lru(key) # Update LRU karena data diakses
         
         old_data = row.data.copy() # Nilai lama dicatat untuk Log
-        report = MockChangeReport(table_name, old_data, new_data)
+        report = MockChangeReport(table_name, pk_value, old_data, new_data)
         # buat entri log
         log_entry_str = self.log_writer.create_log_entry(
             transaction_id, ActionType.WRITE, report

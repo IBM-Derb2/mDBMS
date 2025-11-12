@@ -30,6 +30,7 @@ class LogWriter:
         # jika ini adalah aksi wite, tambahin detail perubahannya
         if action == ActionType.WRITE and change_report:
             log_data["table_name"] = change_report.table_name
+            log_data["pk_value"] = change_report.pk_value
             log_data["old_data"] = change_report.old_data
             log_data["new_data"] = change_report.new_data
         # ubah dict py jadi string json
