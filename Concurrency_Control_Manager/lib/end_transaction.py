@@ -97,7 +97,7 @@ class EndTransactionManager:
                 print(f"\n[EndTxManager] Melepaskan locks/resources...")
             
             # bisa dihapus kalau gk butuh logging
-            locks_released = self._release_resources(transaction_id, accessed_objects)
+            locks_released = self._release_resources_list(transaction_id, accessed_objects)
             
             if self.verbose:
                 print(f"[EndTxManager] Locks successfully released: {locks_released}")
@@ -110,7 +110,7 @@ class EndTransactionManager:
             if is_commit and result == EndTransactionResult.SUCCESS:
                 if self.verbose:
                     print(f"\n[EndTxManager] Melakukan COMMIT...")
-                self.tx_manager.mark_partially_committed(transaction_id)
+                # self.tx_manager.mark_partially_committed(transaction_id)
                 self.tx_manager.commit_transaction(transaction_id)
                 resources_cleaned.append(f"Transaction {transaction_id} committed")
             else:
@@ -128,7 +128,7 @@ class EndTransactionManager:
             resources_cleaned.append(f"Transaction {transaction_id} terminated")
             
             if self.verbose:
-                print(f"\n[EndTxManager] ✓ TX {transaction_id} berhasil diakhiri")
+                print(f"\n[EndTxManager] TX {transaction_id} berhasil diakhiri")
                 print(f"{'='*60}\n")
             
         except Exception as e:
@@ -197,7 +197,7 @@ class EndTransactionManager:
         
         return {'valid': valid, 'errors': errors}
     
-    def _release_resources(
+    def _release_resources_list(
         self, 
         transaction_id: int, 
         accessed_objects: set
