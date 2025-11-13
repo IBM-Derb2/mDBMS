@@ -4,7 +4,7 @@ from index_type_enum import IndexTypeEnum
 from b_plus_tree_index import BPlusTreeIndex
 from hash_index import HashIndex
 from pathlib import Path
-from Utils import DataRetrieval, Rows
+from Utils import DataRetrieval, DataDeletion, Rows
 
 class StorageEngine:
     def __init__(self, data_dir: str = "data", serializer: Any | None = None) -> None:
@@ -86,6 +86,66 @@ class StorageEngine:
             return left >= right
         # kalau operator tidak dikenal, demi aman anggap tidak lolos
         return False
+    
+    def delete_block(self, data_deletion: DataDeletion) -> int:
+        """
+        hapus baris dari tabel berdasarkan kondisi yang diberikan. pake strategi "Read-All, Filter, Write-All".
+
+        Args:
+            data_deletion (DataDeletion): Objek yang berisi nama tabel dan kondisi WHERE.
+        Returns:
+            int: Jumlah baris yang berhasil dihapus.
+        """
+        if self.serializer is None:
+            raise RuntimeError("Serializer belum di-set")
+
+        table_name = data_deletion.table
+        schema_path = self.data_dir / f"{table_name}_schema.dat"
+        data_path = self.data_dir / f"{table_name}.dat"
+
+        # baca data
+        try:
+            schema_binary = schema_path.read_bytes()
+            data_binary = data_path.read_bytes()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File schema/data untuk tabel '{table_name}' tidak ditemukan di '{self.data_dir}'")
+
+        # Deserialize (Ubah biner ke list of dict)
+        schema_dict = self.serializer.deserialize_schema(schema_binary) # Asumsi: deserialize_schema bakal return dict seperti: {"table_name": "...", "columns": [...]}
+        schema_columns = schema_dict.get("columns") 
+        if schema_columns is None:
+             raise ValueError(f"Format skema untuk '{table_name}' tidak valid. Key 'columns' tidak ditemukan.")
+
+        all_rows = self.serializer.deserialize_with_blocks(data_binary, schema_columns)
+        if not all_rows:
+            return 0  
+
+        # Filter 
+        rows_to_keep = []
+        deleted_count = 0
+        has_conditions = data_deletion.conditions and len(data_deletion.conditions) > 0
+
+        for row in all_rows:
+            matches = False
+            if has_conditions:
+                matches = self._match_conditions(row, data_deletion.conditions)
+            
+            if not has_conditions:
+                # kalo ga ada WHERE clause (DELETE FROM table;) -> hapus semua
+                deleted_count += 1
+            elif matches:
+                # ada WHERE dan cocok (DELETE FROM users WHERE id=1;) -> hapus
+                deleted_count += 1
+            else:
+                # ada WHERE tapi tidak cocok -> simpan 
+                rows_to_keep.append(row)
+
+        # Overwrite
+        if deleted_count > 0:
+            new_data_binary = self.serializer.serialize_with_blocks(rows_to_keep, schema_dict)
+            data_path.write_bytes(new_data_binary)
+
+        return deleted_count
 
     def write_block(self, data_write: DataWrite) -> Rows:
         """
