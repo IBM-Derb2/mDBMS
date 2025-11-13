@@ -155,9 +155,6 @@ class StorageEngine:
 
         return deleted_count
 
-    def set_index(
-        self, table: str, column: str, index_type: Union[str | IndexTypeEnum]
-    ) -> None:
     def write_block(self, data_write: DataWrite) -> Rows:
         """
         Read block data from the hard disk based on the DataRetrieval object and return it in Rows format.
@@ -308,7 +305,9 @@ class StorageEngine:
 
         return temp.rows_count
     
-    def set_index(self, table: str, column: str, index_type:Union[str | IndexTypeEnum]) -> None:
+    def set_index(
+        self, table: str, column: str, index_type: Union[str | IndexTypeEnum]
+    ) -> None:
         """
         table: table name to be indexed
         column: column name to be indexed
