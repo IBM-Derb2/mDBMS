@@ -3,7 +3,7 @@ import random
 
 serializer = Serializer()
 
-# === SCHEMA ===
+
 schema_student = {
     "table_name": "student",
     "columns": [
@@ -32,7 +32,7 @@ schema_attends = {
     ]
 }
 
-# === DATA ===
+
 students = [
     {
         "StudentID": i,
@@ -61,7 +61,7 @@ attends = [
     for _ in range(50)
 ]
 
-# === SERIALIZE TO FILE ===
+
 for schema, data in [
     (schema_student, students),
     (schema_course, courses),
