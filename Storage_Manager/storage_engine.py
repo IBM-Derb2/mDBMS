@@ -1,186 +1,160 @@
 from __future__ import annotations
-from typing import Union, Dict, Tuple, Any, Iterable
+from typing import Union, List
 from b_plus_tree_index import BPlusTreeIndex
 from hash_index import HashIndex
 from pathlib import Path
-from Utils import DataRetrieval, DataDeletion, Rows, Statistic, IndexType
+from utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from math import ceil
 from serializer import Serializer
 
 
 class StorageEngine:
-    DATA_FOLDER = "Storage_Manager/dummy_data"
+    DATA_FOLDER = "data"
 
     def __init__(
-        self, data_dir: str = "data", serializer: Serializer | None = None
+        self, data_dir: str = "", serializer: Serializer = None
     ) -> None:
-        self.data_dir = Path(data_dir)
-        self.serializer = serializer
-        # key: (table, column) -> value: index object (BPlusTreeIndex / HashIndex)
-        self.indexes: Dict[Tuple[str, str], Union[BPlusTreeIndex, HashIndex]] = {}
+        self.data_dir = data_dir
+        if serializer is None:
+            self.serializer = Serializer()
+        else:
+            self.serializer = serializer
+
+    def _get_path(self, table: str, file_type: str = "data") -> str:
+        """Helper to get file paths with DATA_FOLDER/data_dir structure"""
+        if self.data_dir:
+            base_path = f"{self.DATA_FOLDER}/{self.data_dir}"
+        else:
+            base_path = self.DATA_FOLDER
+
+        if file_type == "schema":
+            return f"{base_path}/{table}_schema.dat"
+        else:  # data
+            return f"{base_path}/{table}.dat"
 
     def read_block(self, data_retrieval: DataRetrieval) -> Rows:
         """
-        TODO (buat pengembangan lanjut):
-        kalau data_retrieval.search_type == "index" dan index tersedia,
-        gunakan index untuk memperkecil candidate rows (bukan full scan).
+        Read block data from the hard disk based on the DataRetrieval object and return it in Rows format.
+        Args:
+            data_retrieval (DataRetrieval): Object that contains information about the table, columns, and conditions.
+
+        Returns:
+            Rows: Rows object containing the read data.
         """
         table = data_retrieval.table
+        schema_file = self._get_path(table, "schema")
+        data_file = self._get_path(table, "data")
 
-        if self.serializer is None:
-            raise RuntimeError("Serializer belum di-set di StorageEngine")
+        try:
+            with open(schema_file, "rb") as f:
+                schema = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File schema for {table} table is not found")
 
-        raw_rows: Iterable[dict] = self.serializer.iter_rows(table)
+        skema = self.serializer.deserialize_schema(schema)
 
-        result_rows = []
+        try:
+            with open(data_file, "rb") as f:
+                binary_data = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File data table for {table} table is not found")
 
-        for row in raw_rows:
-            if not self._match_conditions(row, data_retrieval):
-                continue
+        rows_data = self.serializer.deserialize_with_blocks(binary_data, skema["columns"])
 
-            if data_retrieval.wants_all_columns():
-                projected = row
-            else:
-                projected = {col: row.get(col, None) for col in data_retrieval.columns}
+        if len(rows_data) == 0:
+            return Rows()
 
-            result_rows.append(projected)
+        # mencari semua column yang ada di rows_data
+        columns = set()
+        for row in rows_data:
+            columns.update(row.keys())
 
-        return Rows(data=result_rows)
+        # mengurangi columns dengan kolom yang ada pada data_retrieval.column
+        columns = list(columns - set(data_retrieval.column))
 
-    def _match_conditions(self, row: dict, data_retrieval: DataRetrieval) -> bool:
+        temp = Rows()
+        for i in range(len(rows_data)):
+            if self._matches_conditions(rows_data[i], data_retrieval.conditions):
+                if len(data_retrieval.column) == 1 and data_retrieval.column[0] == "*":
+                    temp.data.append(rows_data[i])
+                    temp.idx.append(i)
+                else:
+                    # mengurangi rows_data[i] dengan column yang ada pada columns
+                    for col in columns:
+                        del rows_data[i][col]
+                    temp.data.append(rows_data[i])
+                    temp.idx.append(i)
+
+        temp.rows_count = len(temp.data)
+        return temp
+
+    def _matches_conditions(self, row: dict, conditions: List) -> bool:
         """
-        ngecek apakah satu row memenuhi semua kondisi di DataRetrieval.
-        """
-        if not data_retrieval.conditions:
-            # tidak ada WHERE -> selalu lolos
-            return True
-
-        for cond in data_retrieval.conditions:
-            column = cond.column
-            op = cond.operation
-            operand_raw = cond.operand
-
-            value = row.get(column, None)
-
-            # sementara operand & value dibandingkan apa adanya.
-            # nanti bisa ditambah casting tipe (int, float, dll) sesuai schema.
-            operand = operand_raw
-
-            if not self._compare(value, op, operand):
-                return False
-
-        return True
-
-    @staticmethod
-    def _compare(left: Any, op: str, right: Any) -> bool:
-        """
-        membandingkan dua nilai berdasarkan operator SQL sederhana
-        """
-        if op == "=":
-            return left == right
-        if op in ("<>", "!="):
-            return left != right
-        if op == "<":
-            return left < right
-        if op == ">":
-            return left > right
-        if op == "<=":
-            return left <= right
-        if op == ">=":
-            return left >= right
-        # kalau operator tidak dikenal, demi aman anggap tidak lolos
-        return False
-
-    def delete_block(self, data_deletion: DataDeletion) -> int:
-        """
-        hapus baris dari tabel berdasarkan kondisi yang diberikan. pake strategi "Read-All, Filter, Write-All".
+        Checks whether a row satisfies all given conditions.
 
         Args:
-            data_deletion (DataDeletion): Objek yang berisi nama tabel dan kondisi WHERE.
+            row (dict): Data row to be checked.
+            conditions (List[Condition]): List of conditions to be satisfied.
+
         Returns:
-            int: Jumlah baris yang berhasil dihapus.
+            bool: True if the row satisfies all conditions, False otherwise.
         """
-        if self.serializer is None:
-            raise RuntimeError("Serializer belum di-set")
+        if not conditions:
+            return True
 
-        table_name = data_deletion.table
-        schema_path = self.data_dir / f"{table_name}_schema.dat"
-        data_path = self.data_dir / f"{table_name}.dat"
+        for condition in conditions:
+            column_value = row.get(condition.column)
+            if column_value is None:
+                return False
+            if not self._evaluate_condition(column_value, condition):
+                return False
+        return True
 
-        # baca data
-        try:
-            schema_binary = schema_path.read_bytes()
-            data_binary = data_path.read_bytes()
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"File schema/data untuk tabel '{table_name}' tidak ditemukan di '{self.data_dir}'"
-            )
+    def _evaluate_condition(self, value: Union[str, int], condition) -> bool:
+        """
+        Evaluates whether a value satisfies a given condition.
 
-        # Deserialize (Ubah biner ke list of dict)
-        schema_dict = self.serializer.deserialize_schema(
-            schema_binary
-        )  # Asumsi: deserialize_schema bakal return dict seperti: {"table_name": "...", "columns": [...]}
-        schema_columns = schema_dict.get("columns")
-        if schema_columns is None:
-            raise ValueError(
-                f"Format skema untuk '{table_name}' tidak valid. Key 'columns' tidak ditemukan."
-            )
+        Args:
+            value (Union[str, int]): Value to be evaluated.
+            condition (Condition): Condition to be applied.
 
-        all_rows = self.serializer.deserialize_with_blocks(data_binary, schema_columns)
-        if not all_rows:
-            return 0
-
-        # Filter
-        rows_to_keep = []
-        deleted_count = 0
-        has_conditions = data_deletion.conditions and len(data_deletion.conditions) > 0
-
-        for row in all_rows:
-            matches = False
-            if has_conditions:
-                matches = self._match_conditions(row, data_deletion.conditions)
-
-            if not has_conditions:
-                # kalo ga ada WHERE clause (DELETE FROM table;) -> hapus semua
-                deleted_count += 1
-            elif matches:
-                # ada WHERE dan cocok (DELETE FROM users WHERE id=1;) -> hapus
-                deleted_count += 1
-            else:
-                # ada WHERE tapi tidak cocok -> simpan
-                rows_to_keep.append(row)
-
-        # Overwrite
-        if deleted_count > 0:
-            new_data_binary = self.serializer.serialize_with_blocks(
-                rows_to_keep, schema_dict
-            )
-            data_path.write_bytes(new_data_binary)
-
-        return deleted_count
+        Returns:
+            bool: True if the value satisfies the condition, False otherwise.
+        """
+        if condition.operation == "=":
+            return value == condition.operand
+        elif condition.operation == "<>":
+            return value != condition.operand
+        elif condition.operation == ">":
+            return value > condition.operand
+        elif condition.operation == ">=":
+            return value >= condition.operand
+        elif condition.operation == "<":
+            return value < condition.operand
+        elif condition.operation == "<=":
+            return value <= condition.operand
+        else:
+            raise ValueError(f"Operation is not known: {condition.operation}")
 
     def write_block(self, data_write: DataWrite) -> Rows:
         """
-        Read block data from the hard disk based on the DataRetrieval object and return it in Rows format.
+        Write/update block data to the hard disk based on the DataWrite object.
         Args:
             data_write (DataWrite): Object that contains information about the table, columns, conditions, and also new_value.
 
         Returns:
-            int: integer that is the number of rows that are updated according to data_write.conditions
+            Rows: Rows object containing the updated data.
         """
-        # membuka schema.dat dengan nama yang sama dengan data_write.table
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}_schema.dat", "rb"
-        ) as f:
+        table = data_write.table
+        schema_file = self._get_path(table, "schema")
+        data_file = self._get_path(table, "data")
+
+        with open(schema_file, "rb") as f:
             schema = f.read()
 
         skema = self.serializer.deserialize_schema(schema)
 
-        offset = 0
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}.dat", "rb"
-        ) as f:
-            f.seek(offset)
+        with open(data_file, "rb") as f:
             binary_data = f.read()
 
         rows_data = self.serializer.deserialize_with_blocks(
@@ -196,11 +170,9 @@ class StorageEngine:
             if isinstance(data_write.new_value, list):
                 operasi = ""
                 for j in data_write.new_value:
-                    # mengecek apakah i merupakan int atau str
                     if isinstance(j, int):
                         operasi += str(j)
                     else:
-                        # mencari apakah i merupakan salah satu column yang ada pada rows_data[i]
                         if j in rows_data[i]:
                             operasi += str(rows_data[i][j])
                         else:
@@ -242,72 +214,76 @@ class StorageEngine:
 
         tes = {"columns": skema["columns"]}
         binary_data = self.serializer.serialize_with_blocks(temp.data, tes)
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}.dat", "wb"
-        ) as f:
+        with open(data_file, "wb") as f:
             f.write(binary_data)
 
         return temp
-
-    def write_specific_block(self, data_write: DataWrite, block_index: int) -> int:
+    
+    def delete_block(self, data_deletion: DataDeletion) -> int:
         """
-        Write specific block data to the hard disk based on the DataWrite object and block index.
+        Delete rows from table based on conditions. Uses "Read-All, Filter, Write-All" strategy.
+
         Args:
-            data_write (DataWrite): Object that contains information about the table, columns, conditions, and new_value.
-            block_index (int): The index of the block to write.
-
+            data_deletion (DataDeletion): Object that contains table name and WHERE conditions.
         Returns:
-            int: The number of rows that are updated according to data_write.conditions.
+            int: Number of rows successfully deleted.
         """
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}_schema.dat", "rb"
-        ) as f:
-            schema = f.read()
+        table_name = data_deletion.table
+        schema_file = self._get_path(table_name, "schema")
+        data_file = self._get_path(table_name, "data")
 
-        skema = self.serializer.deserialize_schema(schema)
+        try:
+            with open(schema_file, "rb") as f:
+                schema_binary = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"File schema for {table_name} table is not found"
+            )
 
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}.dat", "rb"
-        ) as f:
-            binary_data = f.read()
+        try:
+            with open(data_file, "rb") as f:
+                data_binary = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"File data table for {table_name} table is not found"
+            )
 
-        rows_data = self.serializer.deserialize_with_blocks(
-            binary_data, skema["columns"]
-        )
+        schema_dict = self.serializer.deserialize_schema(schema_binary)
+        schema_columns = schema_dict.get("columns")
+        if schema_columns is None:
+            raise ValueError(
+                f"Format skema untuk '{table_name}' tidak valid. Key 'columns' tidak ditemukan."
+            )
 
-        if len(rows_data) == 0:
+        all_rows = self.serializer.deserialize_with_blocks(data_binary, schema_columns)
+        if not all_rows:
             return 0
 
-        temp = Rows()
-        for i in range(len(rows_data)):
-            if i == block_index:
-                if isinstance(data_write.new_value, list):
-                    operasi = ""
-                    for j in data_write.new_value:
-                        if isinstance(j, int):
-                            operasi += str(j)
-                        else:
-                            if j in rows_data[i]:
-                                operasi += str(rows_data[i][j])
-                            else:
-                                operasi += str(j)
+        # Filter
+        rows_to_keep = []
+        deleted_count = 0
+        has_conditions = data_deletion.conditions and len(data_deletion.conditions) > 0
 
-                    tempNewValue = eval(operasi)
+        for row in all_rows:
+            if not has_conditions:
+                # no WHERE clause -> delete all
+                deleted_count += 1
+            elif self._matches_conditions(row, data_deletion.conditions):
+                # has WHERE and matches -> delete
+                deleted_count += 1
+            else:
+                # has WHERE but doesn't match -> keep
+                rows_to_keep.append(row)
 
-                    if self._matches_conditions(rows_data[i], data_write.conditions):
-                        rows_data[i] = tempNewValue
-                        temp.data.append(rows_data[i])
-                        temp.idx.append(i)
+        # Overwrite
+        if deleted_count > 0:
+            new_data_binary = self.serializer.serialize_with_blocks(
+                rows_to_keep, schema_dict
+            )
+            with open(data_file, "wb") as f:
+                f.write(new_data_binary)
 
-        temp.rows_count = len(temp.data)
-
-        binary_data = self.serializer.serialize_with_blocks(temp.data, skema["columns"])
-        with open(
-            f"Storage_Manager/data_demo_lowercase/{data_write.table}.dat", "wb"
-        ) as f:
-            f.write(binary_data)
-
-        return temp.rows_count
+        return deleted_count
 
     def set_index(
         self, table: str, column: str, index_type: IndexType
@@ -317,7 +293,7 @@ class StorageEngine:
         column: column name to be indexed
         index_type: index type to be used, either "b+ tree" or "hash"
         """
-        # TODO: Load data
+        # TODO: Load data from self._get_path
 
         if index_type == "b+ tree":
             indexer = BPlusTreeIndex()
@@ -330,23 +306,32 @@ class StorageEngine:
 
         return None
 
-    def get_stats(self, table) -> Statistic:
+    def get_stats(self, table: str) -> Statistic:
+        """
+        Get statistics for a table.
+
+        Args:
+            table (str): Table name
+
+        Returns:
+            Statistic: Statistics object containing n_r, b_r, l_r, f_r, V_a_r
+        """
         block_size = 1024
-        data_file = f"{self.DATA_FOLDER}/{table}.dat"
-        schema_file = f"{self.DATA_FOLDER}/{table}_schema.dat"
+        data_file = self._get_path(table, "data")
+        schema_file = self._get_path(table, "schema")
 
         with open(schema_file, "rb") as f:
             schema = f.read()
 
         deserialized_schema = self.serializer.deserialize_schema(schema)
 
-        # l_r
+        # l_r - tuple size
         tuple_size = sum(
             col.get("length", 4) if col["type"] in ["varchar", "char"] else 4
             for col in deserialized_schema["columns"]
         )
 
-        # f_r blocking factor
+        # f_r - blocking factor
         blocking_factor = block_size // tuple_size
 
         with open(data_file, "rb") as f:
@@ -355,13 +340,13 @@ class StorageEngine:
             data, deserialized_schema["columns"]
         )
 
-        # n_r number of tuples
+        # n_r - number of tuples
         n_tuples = len(deserialized_data)
 
-        # b_r number of blocks
+        # b_r - number of blocks
         n_blocks = ceil(n_tuples / blocking_factor)
 
-        # V_a_r distinct values in r for attr a
+        # V_a_r - distinct values in r for attr a
         distinct_val = {}
         for col in deserialized_schema["columns"]:
             col_name = col["name"]
@@ -369,3 +354,40 @@ class StorageEngine:
                 set(row[col_name] for row in deserialized_data)
             )
         return Statistic(n_tuples, n_blocks, tuple_size, blocking_factor, distinct_val)
+
+    def write_schema_file(self, schema: dict) -> None:
+        """
+        Write schema to file using serializer.
+
+        Args:
+            schema (dict): Schema dictionary containing table_name and columns
+        """
+        table_name = schema["table_name"]
+        schema_file = self._get_path(table_name, "schema")
+
+        # Create directory if doesn't exist
+        import os
+        os.makedirs(os.path.dirname(schema_file), exist_ok=True)
+
+        schema_bytes = self.serializer.serialize_schema(schema)
+        with open(schema_file, "wb") as f:
+            f.write(schema_bytes)
+
+    def write_data_file(self, table: str, data: list, schema: dict) -> None:
+        """
+        Write data to file using serializer.
+
+        Args:
+            table (str): Table name
+            data (list): List of row dictionaries
+            schema (dict): Schema dictionary containing columns info
+        """
+        data_file = self._get_path(table, "data")
+
+        # Create directory if doesn't exist
+        import os
+        os.makedirs(os.path.dirname(data_file), exist_ok=True)
+
+        data_bytes = self.serializer.serialize_with_blocks(data, schema)
+        with open(data_file, "wb") as f:
+            f.write(data_bytes)

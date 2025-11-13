@@ -1,13 +1,13 @@
 import unittest
 from storage_engine import StorageEngine
-from Utils import DataRetrieval, DataDeletion, Condition
+from utils import DataRetrieval, Condition
 from serializer import Serializer
 
 
 class TestStorageEngine(unittest.TestCase):
     def setUp(self):
         self.serializer = Serializer()
-        self.storage = StorageEngine(data_dir="data_demo", serializer=self.serializer)
+        self.storage = StorageEngine(data_dir="dummy_data", serializer=self.serializer)
 
     def test_read_block(self):
         dr = DataRetrieval(

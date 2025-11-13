@@ -1,7 +1,9 @@
 from serializer import Serializer
+from storage_engine import StorageEngine
 import random
 
-serializer = Serializer()
+# Create StorageEngine with serializer and specify dummy_data directory
+storage_engine = StorageEngine(data_dir="dummy_data", serializer=Serializer())
 
 
 schema_student = {
@@ -62,19 +64,13 @@ attends = [
 ]
 
 
+# Use StorageEngine to write schema and data files
 for schema, data in [
     (schema_student, students),
     (schema_course, courses),
     (schema_attends, attends)
 ]:
-    # serialize schema
-    schema_bytes = serializer.serialize_schema(schema)
-    with open(f"dummy_data/{schema['table_name']}_schema.dat", "wb") as f:
-        f.write(schema_bytes)
+    storage_engine.write_schema_file(schema)
+    storage_engine.write_data_file(schema["table_name"], data, schema)
 
-    # serialize data
-    data_bytes = serializer.serialize_with_blocks(data, schema)
-    with open(f"dummy_data/{schema['table_name']}.dat", "wb") as f:
-        f.write(data_bytes)
-
-print("Dummy data berhasil dibuat di folder dummy_data/")
+print("Dummy data berhasil dibuat di folder Storage_Manager/data/dummy_data/")
