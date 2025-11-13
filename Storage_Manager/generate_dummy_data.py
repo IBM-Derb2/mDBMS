@@ -69,12 +69,12 @@ for schema, data in [
 ]:
     # serialize schema
     schema_bytes = serializer.serialize_schema(schema)
-    with open(f"data_demo/{schema['table_name']}_schema.dat", "wb") as f:
+    with open(f"dummy_data/{schema['table_name']}_schema.dat", "wb") as f:
         f.write(schema_bytes)
 
     # serialize data
     data_bytes = serializer.serialize_with_blocks(data, schema)
-    with open(f"data_demo/{schema['table_name']}.dat", "wb") as f:
+    with open(f"dummy_data/{schema['table_name']}.dat", "wb") as f:
         f.write(data_bytes)
 
-print("Dummy data berhasil dibuat di folder data_demo/")
+print("Dummy data berhasil dibuat di folder dummy_data/")
