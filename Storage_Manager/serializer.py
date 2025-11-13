@@ -11,11 +11,11 @@ class Serializer:
         """
         desisialisasi data biner dengan alokasi blok menjadi baris.
 
-        Argumen:
+        Args:
             binary_data (bytes): Data biner dengan alokasi blok.
             columns List(dict): Kamus skema dengan nama kolom dan tipe data.
 
-        Mengembalikan:
+        Returns:
             list: Daftar baris yang sudah dide-serial-kan dalam bentuk dictionary.
         """
 
