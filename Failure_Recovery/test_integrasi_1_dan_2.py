@@ -8,9 +8,14 @@ from log_config import ActionType
 
 # Impor dari Orang 2
 from buffer_manager import BufferManager, MockStorageEngine, BUFFER_CAPACITY
-from row_dataclass import BUFFER_CAPACITY # (Mungkin duplikat, pastikan impornya benar)
 
 print("--- [SIMULASI INTEGRASI 1 + 2] ---")
+
+PK_1 = {"id": 1}
+PK_2 = {"id": 2}
+PK_3 = {"id": 3}
+PK_4 = {"id": 4}
+PK_5 = {"id": 5}
 
 # Buat folder log & file log Anda (Orang 1)
 lw = LogWriter(log_directory="test_integrasi_logs")
@@ -40,7 +45,7 @@ new_data_1 = {"id": 1, "name": "Produk_A_Revisi", "stock": 50}
 # Ini akan:
 # 1. Menulis log WRITE (via LogWriter)
 # 2. Mengubah data di buffer dan menandainya 'dirty'
-bm.write_block(TX_ID_101, "products", 1, new_data_1)
+bm.write_block(TX_ID_101, "products", PK_1, new_data_1)
 # Output console akan menunjukkan:
 # [Buffer] Cache miss: 1...
 # [SM MOCK] -> Membaca data...
@@ -54,9 +59,9 @@ log_commit = lw.create_log_entry(TX_ID_101, ActionType.COMMIT)
 lw.write_to_file(log_commit)
 
 print("\n[D] MENGISI BUFFER (Sama seperti tes Orang 2)")
-bm.read_block("products", 2)
-bm.read_block("products", 3)
-bm.read_block("products", 4)
+bm.read_block("products", PK_2)
+bm.read_block("products", PK_3)
+bm.read_block("products", PK_4)
 print(f"Urutan LRU: {bm.lru_order}")
 
 print("\n[E] MENGAKSES BLOK 5 (TRIGGER EVICTION)")
@@ -64,7 +69,7 @@ print("\n[E] MENGAKSES BLOK 5 (TRIGGER EVICTION)")
 # BufferManager akan memanggil _evict_block()
 # _evict_block() akan memanggil storage_engine.write_block_to_disk(row_1)
 # Ini sekarang AMAN, karena log untuk Blok 1 sudah ditulis di langkah [B]
-bm.read_block("products", 5) 
+bm.read_block("products", PK_5) 
 
 print(f"\nUrutan LRU setelah eviction: {bm.lru_order}")
 print("\n--- SIMULASI SELESAI ---")

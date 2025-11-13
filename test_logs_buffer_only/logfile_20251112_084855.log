@@ -1,1 +1,0 @@
-{"timestamp": "2025-11-12T08:48:55.997036", "transaction_id": 999, "action": "WRITE", "table_name": "products", "old_data": {"id": 1, "name": "Item_1", "stock": 100}, "new_data": {"id": 1, "name": "Produk_A_Revisi", "stock": 50}}
