@@ -20,30 +20,16 @@ class StorageEngine:
         else:
             self.serializer = serializer
 
-    def _get_path(self, table: str, file_type: str = "data") -> str:
-        """Helper to get file paths with DATA_FOLDER/data_dir structure"""
-        if self.data_dir:
-            base_path = f"{self.DATA_FOLDER}/{self.data_dir}"
-        else:
-            base_path = self.DATA_FOLDER
-
-        if file_type == "schema":
-            return f"{base_path}/{table}_schema.dat"
-        else:  # data
-            return f"{base_path}/{table}.dat"
-
     def read_block(self, data_retrieval: DataRetrieval) -> Rows:
         """
-        Read block data from the hard disk based on the DataRetrieval object and return it in Rows format.
-        Args:
-            data_retrieval (DataRetrieval): Object that contains information about the table, columns, and conditions.
-
-        Returns:
-            Rows: Rows object containing the read data.
+        TODO (buat pengembangan lanjut):
+        kalau data_retrieval.search_type == "index" dan index tersedia,
+        gunakan index untuk memperkecil candidate rows (bukan full scan).
         """
+
         table = data_retrieval.table
-        schema_file = self._get_path(table, "schema")
-        data_file = self._get_path(table, "data")
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_schema.dat"
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
 
         try:
             with open(schema_file, "rb") as f:
@@ -90,15 +76,9 @@ class StorageEngine:
 
     def _matches_conditions(self, row: dict, conditions: List) -> bool:
         """
-        Checks whether a row satisfies all given conditions.
-
-        Args:
-            row (dict): Data row to be checked.
-            conditions (List[Condition]): List of conditions to be satisfied.
-
-        Returns:
-            bool: True if the row satisfies all conditions, False otherwise.
+        ngecek apakah satu row memenuhi semua kondisi di DataRetrieval.
         """
+
         if not conditions:
             return True
 
@@ -112,15 +92,9 @@ class StorageEngine:
 
     def _evaluate_condition(self, value: Union[str, int], condition) -> bool:
         """
-        Evaluates whether a value satisfies a given condition.
-
-        Args:
-            value (Union[str, int]): Value to be evaluated.
-            condition (Condition): Condition to be applied.
-
-        Returns:
-            bool: True if the value satisfies the condition, False otherwise.
+        membandingkan dua nilai berdasarkan operator SQL sederhana
         """
+
         if condition.operation == "=":
             return value == condition.operand
         elif condition.operation == "<>":
@@ -133,21 +107,24 @@ class StorageEngine:
             return value < condition.operand
         elif condition.operation == "<=":
             return value <= condition.operand
-        else:
-            raise ValueError(f"Operation is not known: {condition.operation}")
+        
+        # kalau operator tidak dikenal, demi aman anggap tidak lolos
+        return False
 
     def write_block(self, data_write: DataWrite) -> Rows:
         """
-        Write/update block data to the hard disk based on the DataWrite object.
+        menambah/memperbarui baris dalam tabel berdasarkan kondisi yang diberikan.
+
         Args:
-            data_write (DataWrite): Object that contains information about the table, columns, conditions, and also new_value.
+            data_write (DataWrite): Objek yang berisi nama tabel, kolom yang akan diubah, kondisi WHERE, dan nilai baru.
 
         Returns:
-            Rows: Rows object containing the updated data.
+            Rows: Objek Rows yang berisi baris yang telah diperbarui.
         """
+
         table = data_write.table
-        schema_file = self._get_path(table, "schema")
-        data_file = self._get_path(table, "data")
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_schema.dat"
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
 
         with open(schema_file, "rb") as f:
             schema = f.read()
@@ -221,16 +198,18 @@ class StorageEngine:
     
     def delete_block(self, data_deletion: DataDeletion) -> int:
         """
-        Delete rows from table based on conditions. Uses "Read-All, Filter, Write-All" strategy.
+        hapus baris dari tabel berdasarkan kondisi yang diberikan. pake strategi "Read-All, Filter, Write-All".
 
         Args:
-            data_deletion (DataDeletion): Object that contains table name and WHERE conditions.
+            data_deletion (DataDeletion): Objek yang berisi nama tabel dan kondisi WHERE.
+
         Returns:
-            int: Number of rows successfully deleted.
+            int: Jumlah baris yang berhasil dihapus.
         """
+
         table_name = data_deletion.table
-        schema_file = self._get_path(table_name, "schema")
-        data_file = self._get_path(table_name, "data")
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
 
         try:
             with open(schema_file, "rb") as f:
@@ -259,23 +238,23 @@ class StorageEngine:
         if not all_rows:
             return 0
 
-        # Filter
+        # filter
         rows_to_keep = []
         deleted_count = 0
         has_conditions = data_deletion.conditions and len(data_deletion.conditions) > 0
 
         for row in all_rows:
             if not has_conditions:
-                # no WHERE clause -> delete all
+                # kalo ga ada WHERE clause (DELETE FROM table;) -> hapus semua
                 deleted_count += 1
             elif self._matches_conditions(row, data_deletion.conditions):
-                # has WHERE and matches -> delete
+                # ada WHERE dan cocok (DELETE FROM users WHERE id=1;) -> hapus
                 deleted_count += 1
             else:
-                # has WHERE but doesn't match -> keep
+                # ada WHERE tapi tidak cocok -> simpan
                 rows_to_keep.append(row)
 
-        # Overwrite
+        # overwrite
         if deleted_count > 0:
             new_data_binary = self.serializer.serialize_with_blocks(
                 rows_to_keep, schema_dict
@@ -289,36 +268,38 @@ class StorageEngine:
         self, table: str, column: str, index_type: IndexType
     ) -> None:
         """
-        table: table name to be indexed
-        column: column name to be indexed
-        index_type: index type to be used, either "b+ tree" or "hash"
+        table: Nama tabel untuk diindeks
+        column: Nama kolom untuk diindeks
+        index_type: Jenis indeks ("b+ tree" atau "hash")
         """
-        # TODO: Load data from self._get_path
+
+        # TODO: Load data dari file data
 
         if index_type == "b+ tree":
             indexer = BPlusTreeIndex()
-            # TODO: do indexing, depends on data format
+            # TODO: indexing, tergantung format data
             pass
         elif index_type == "hash":
             indexer = HashIndex()
-            # TODO: do indexing, depends on data format
+            # TODO: indexing, tergantung format data
             pass
 
         return None
 
     def get_stats(self, table: str) -> Statistic:
         """
-        Get statistics for a table.
+        menghitung statistik dasar dari tabel yang diberikan.
 
         Args:
-            table (str): Table name
+            table (str): Nama tabel untuk menghitung statistik.
 
         Returns:
-            Statistic: Statistics object containing n_r, b_r, l_r, f_r, V_a_r
+            Statistic: Objek Statistik yang memiliki n_r, b_r, l_r, f_r, V_a_r
         """
+
         block_size = 1024
-        data_file = self._get_path(table, "data")
-        schema_file = self._get_path(table, "schema")
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_schema.dat"
 
         with open(schema_file, "rb") as f:
             schema = f.read()
@@ -357,15 +338,15 @@ class StorageEngine:
 
     def write_schema_file(self, schema: dict) -> None:
         """
-        Write schema to file using serializer.
+        tulis skema ke file menggunakan serializer.
 
         Args:
-            schema (dict): Schema dictionary containing table_name and columns
+            schema (dict): Skema tabel dengan nama tabel dan kolom.
         """
-        table_name = schema["table_name"]
-        schema_file = self._get_path(table_name, "schema")
 
-        # Create directory if doesn't exist
+        table_name = schema["table_name"]
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+
         import os
         os.makedirs(os.path.dirname(schema_file), exist_ok=True)
 
@@ -375,16 +356,16 @@ class StorageEngine:
 
     def write_data_file(self, table: str, data: list, schema: dict) -> None:
         """
-        Write data to file using serializer.
+        tulis data ke file menggunakan serializer.
 
         Args:
-            table (str): Table name
-            data (list): List of row dictionaries
-            schema (dict): Schema dictionary containing columns info
+            table (str): Nama tabel
+            data (list): Daftar baris data untuk ditulis
+            schema (dict): Skema tabel dengan nama tabel dan kolom.
         """
-        data_file = self._get_path(table, "data")
 
-        # Create directory if doesn't exist
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
+
         import os
         os.makedirs(os.path.dirname(data_file), exist_ok=True)
 

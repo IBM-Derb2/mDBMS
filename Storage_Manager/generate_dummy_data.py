@@ -2,7 +2,6 @@ from serializer import Serializer
 from storage_engine import StorageEngine
 import random
 
-# Create StorageEngine with serializer and specify dummy_data directory
 storage_engine = StorageEngine(data_dir="dummy_data", serializer=Serializer())
 
 
