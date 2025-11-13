@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+from .optimization_engine import OptimizationEngine
+
 
 @dataclass
 class QueryTree:
@@ -8,22 +10,12 @@ class QueryTree:
     childs: List['QueryTree'] = field(default_factory=list)
     parent: Optional['QueryTree'] = None
 
+
 @dataclass
 class ParsedQuery:
     query_str: str
     query_tree: QueryTree = field(default_factory=QueryTree)
-    plan_details: str = "" 
+    plan_details: str = ""
 
-class OptimizationEngine:
-    def parse_query(self, query: str) -> ParsedQuery:
-        print(f"[Optimizer Mock] Parsing query: '{query}'")
-        return ParsedQuery(query_str=query)
 
-    def optimize_query(self, query: ParsedQuery) -> ParsedQuery:
-        print(f"[Optimizer Mock] Optimizing query: '{query.query_str}'")
-        query.plan_details = "Optimized Plan (e.g., Use Index Scan on 'ID')"
-        return query
-
-    def get_cost(self, query: ParsedQuery) -> int:
-        print("[Optimizer Mock] Calculating cost...")
-        return 10 # Biaya dummy
+__all__ = ['OptimizationEngine', 'QueryTree', 'ParsedQuery']
