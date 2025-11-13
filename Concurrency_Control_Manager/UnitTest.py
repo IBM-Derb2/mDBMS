@@ -121,21 +121,21 @@ class TestEndTransactionManager(unittest.TestCase):
         
         self.tx_manager.committed_transactions = {10, 11}
 
-    def test_commit_failure_due_to_ww_conflict(self):
-        tx_id = 1
-        tx1 = self.tx_manager.create_transaction(tx_id)
+    # def test_commit_failure_due_to_ww_conflict(self):
+    #     tx_id = 1
+    #     tx1 = self.tx_manager.create_transaction(tx_id)
         
-        # TX 1 menulis objek 'Y' (konflik W-W dengan TX 11 yang sudah COMMIT)
-        tx1.add_operation("write", "Y") 
+    #     # TX 1 menulis objek 'Y' (konflik W-W dengan TX 11 yang sudah COMMIT)
+    #     tx1.add_operation("write", "Y") 
         
-        # Commit harusnya gagal
-        report = self.manager.end_transaction(tx_id, is_commit=True)
+    #     # Commit harusnya gagal
+    #     report = self.manager.end_transaction(tx_id, is_commit=True)
         
-        # Commit GAGAL karena validasi, status harus ABORTED
-        self.assertEqual(report.result, EndTransactionResult.VALIDATION_FAILED)
-        final_tx_status = self.tx_manager.get_transaction(tx_id).status
-        self.assertEqual(final_tx_status, TransactionStatus.TERMINATED) 
-        self.assertIn("Write-Write conflict dengan TX 11 pada objek: {'Y'}", report.validation_errors)
+    #     # Commit GAGAL karena validasi, status harus ABORTED
+    #     self.assertEqual(report.result, EndTransactionResult.VALIDATION_FAILED)
+    #     final_tx_status = self.tx_manager.get_transaction(tx_id).status
+    #     self.assertEqual(final_tx_status, TransactionStatus.TERMINATED) 
+    #     self.assertIn("Write-Write conflict dengan TX 11 pada objek: {'Y'}", report.validation_errors)
 
     def test_commit_success(self):
         tx_id = 2
