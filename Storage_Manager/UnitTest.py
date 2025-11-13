@@ -3,6 +3,7 @@ from storage_engine import StorageEngine
 from Utils import DataRetrieval, DataDeletion, Condition
 from serializer import Serializer
 
+
 class TestStorageEngine(unittest.TestCase):
     def setUp(self):
         self.serializer = Serializer()
@@ -20,8 +21,10 @@ class TestStorageEngine(unittest.TestCase):
 
     def test_get_stats(self):
         stats = self.storage.get_stats("student")
+        print(stats)
         self.assertIsNotNone(stats)
         print("Get Stats -> OK")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,10 +6,15 @@ from hash_index import HashIndex
 from pathlib import Path
 from Utils import DataRetrieval, DataDeletion, Rows, Statistic
 from math import ceil
+from serializer import Serializer
 
 
 class StorageEngine:
-    def __init__(self, data_dir: str = "data", serializer: Any | None = None) -> None:
+    DATA_FOLDER = "Storage_Manager/dummy_data"
+
+    def __init__(
+        self, data_dir: str = "data", serializer: Serializer | None = None
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.serializer = serializer
         # key: (table, column) -> value: index object (BPlusTreeIndex / HashIndex)
@@ -304,7 +309,7 @@ class StorageEngine:
             f.write(binary_data)
 
         return temp.rows_count
-    
+
     def set_index(
         self, table: str, column: str, index_type: Union[str | IndexTypeEnum]
     ) -> None:
@@ -333,11 +338,13 @@ class StorageEngine:
 
     def get_stats(self, table) -> Statistic:
         block_size = 1024
-        data_file = f"data/{table}.dat"
-        schema_file = f"data/{table}_schema.dat"
-        # TODO deserialize schema and data
+        data_file = f"{self.DATA_FOLDER}/{table}.dat"
+        schema_file = f"{self.DATA_FOLDER}/{table}_schema.dat"
 
-        deserialized_schema: Dict
+        with open(schema_file, "rb") as f:
+            schema = f.read()
+
+        deserialized_schema = self.serializer.deserialize_schema(schema)
 
         # l_r
         tuple_size = sum(
@@ -348,7 +355,11 @@ class StorageEngine:
         # f_r blocking factor
         blocking_factor = block_size // tuple_size
 
-        deserialized_data: Rows
+        with open(data_file, "rb") as f:
+            data = f.read()
+        deserialized_data = self.serializer.deserialize_with_blocks(
+            data, deserialized_schema["columns"]
+        )
 
         # n_r number of tuples
         n_tuples = len(deserialized_data)
