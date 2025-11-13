@@ -28,7 +28,7 @@ class SQLTokenizer:
         'UPDATE',
         'DELETE', 'SET',
 
-        'CREATE', 'TABLE', 'DROP', 'ALTER',
+        'CREATE', 'TABLE', 'DROP',
 
         'JOIN', 'INNER', 'NATURAL',
         'ON', 'AS', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
@@ -36,7 +36,7 @@ class SQLTokenizer:
         'GROUP', 'HAVING', 'DISTINCT', 'ALL', 'UNION', 'INTERSECT', 'EXCEPT',
         'BEGIN', 'COMMIT', 'ROLLBACK', 'TRANSACTION',
         'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'CONSTRAINT',
-        'INTEGER', 'INT', 'FLOAT', 'CHAR', 'VARCHAR', 'TEXT', 'DATE', 'TIMESTAMP',
+        'INT', 'FLOAT', 'CHAR',
         'NULL', 'DEFAULT', 'UNIQUE', 'CHECK', 'CASCADE', 'RESTRICT'
     }
 
