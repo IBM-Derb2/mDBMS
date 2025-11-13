@@ -15,10 +15,16 @@ class Version:
     
 
 class MultiVersionStrategy(ConcurrencyStrategy):
-    
+
     def __init__(self):
         self.version_store: Dict[str, List[Version]] = {}
-    
+        self.tx_manager_ref = None  # Reference to transaction manager
+        self.verbose = True
+
+    def set_transaction_manager(self, tx_manager):
+        """Set reference to transaction manager for GC."""
+        self.tx_manager_ref = tx_manager
+
     def _get_object_id(self, obj: Any) -> str:
         return str(obj)
 
@@ -112,4 +118,93 @@ class MultiVersionStrategy(ConcurrencyStrategy):
 
 
     def end_transaction(self, transaction_id: int):
-        print(f"[MVCCStrategy] TX {transaction_id} selesai.")
+        if self.verbose:
+            print(f"[MVCCStrategy] TX {transaction_id} selesai.")
+
+        # Trigger garbage collection after transaction ends
+        self.garbage_collect_versions()
+
+    def garbage_collect_versions(self):
+        """
+        Remove old versions that are no longer needed.
+
+        A version can be garbage collected if:
+        1. It has expired (expired_ts != 999999)
+        2. No active transaction could possibly read it
+           (its expired_ts < oldest_active_transaction_ts)
+        """
+        if not self.tx_manager_ref:
+            return
+
+        # Get oldest active transaction timestamp
+        active_txs = self.tx_manager_ref.active_transactions
+        if not active_txs:
+            # No active transactions, can't GC safely
+            return
+
+        oldest_active_ts = min(active_txs) if active_txs else 999999
+
+        gc_count = 0
+        total_versions_before = sum(len(versions) for versions in self.version_store.values())
+
+        # Clean up old versions for each object
+        for obj_id in list(self.version_store.keys()):
+            versions_list = self.version_store[obj_id]
+
+            # Keep only versions that:
+            # - Are still live (expired_ts == 999999), OR
+            # - Could still be read by active transactions (expired_ts >= oldest_active_ts)
+            cleaned_versions = [
+                v for v in versions_list
+                if v.expired_ts == 999999 or v.expired_ts >= oldest_active_ts
+            ]
+
+            gc_count += len(versions_list) - len(cleaned_versions)
+
+            if cleaned_versions:
+                self.version_store[obj_id] = cleaned_versions
+            else:
+                # No versions left, remove object entirely
+                del self.version_store[obj_id]
+
+        total_versions_after = sum(len(versions) for versions in self.version_store.values())
+
+        if self.verbose and gc_count > 0:
+            print(f"[MVCCStrategy] Garbage collected {gc_count} old versions "
+                  f"({total_versions_before} -> {total_versions_after} versions)")
+
+    def print_version_store(self):
+        """Print all versions for debugging."""
+        print("\n" + "="*60)
+        print("MVCC VERSION STORE")
+        print("="*60)
+        if not self.version_store:
+            print("(empty)")
+        else:
+            for obj_id, versions in self.version_store.items():
+                print(f"\nObject '{obj_id}': {len(versions)} version(s)")
+                for i, version in enumerate(versions, 1):
+                    status = "LIVE" if version.expired_ts == 999999 else "EXPIRED"
+                    print(f"  {i}. {status} - Created: TS{version.created_ts}, "
+                          f"Expired: {'INF' if version.expired_ts == 999999 else f'TS{version.expired_ts}'}")
+        print("="*60 + "\n")
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get MVCC statistics."""
+        total_objects = len(self.version_store)
+        total_versions = sum(len(versions) for versions in self.version_store.values())
+        live_versions = sum(
+            sum(1 for v in versions if v.expired_ts == 999999)
+            for versions in self.version_store.values()
+        )
+        expired_versions = total_versions - live_versions
+
+        avg_versions_per_object = total_versions / total_objects if total_objects > 0 else 0
+
+        return {
+            'total_objects': total_objects,
+            'total_versions': total_versions,
+            'live_versions': live_versions,
+            'expired_versions': expired_versions,
+            'avg_versions_per_object': avg_versions_per_object
+        }

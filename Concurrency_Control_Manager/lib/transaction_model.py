@@ -96,7 +96,7 @@ class TransactionManager:
             )
 
         tx.status = TransactionStatus.PARTIALLY_COMMITTED
-        print(f"[TxManager] TX {transaction_id} → PARTIALLY_COMMITTED")
+        print(f"[TxManager] TX {transaction_id} -> PARTIALLY_COMMITTED")
 
     def commit_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
@@ -119,7 +119,7 @@ class TransactionManager:
             self.active_transactions.remove(transaction_id)
         self.committed_transactions.add(transaction_id)
 
-        print(f"[TxManager] ✓ TX {transaction_id} COMMITTED")
+        print(f"[TxManager] [OK] TX {transaction_id} COMMITTED")
 
     def fail_transaction(self, transaction_id: int, reason: str = "Unknown"):
         tx = self.transactions.get(transaction_id)
@@ -136,7 +136,7 @@ class TransactionManager:
             return
 
         tx.status = TransactionStatus.FAILED
-        print(f"[TxManager] ✗ TX {transaction_id} FAILED: {reason}")
+        print(f"[TxManager] [FAIL] TX {transaction_id} FAILED: {reason}")
 
     def abort_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
@@ -156,7 +156,7 @@ class TransactionManager:
             self.active_transactions.remove(transaction_id)
         self.aborted_transactions.add(transaction_id)
 
-        print(f"[TxManager] ⮌ TX {transaction_id} ABORTED (rolled back)")
+        print(f"[TxManager] [ABORT] TX {transaction_id} ABORTED (rolled back)")
 
     def terminate_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
@@ -207,7 +207,7 @@ class TransactionManager:
             if tx_id not in visited:
                 cycle = has_cycle(tx_id, visited, set(), [])
                 if cycle:
-                    print(f"[TxManager] ⚠ DEADLOCK DETECTED: {cycle}")
+                    print(f"[TxManager] [WARN] DEADLOCK DETECTED: {cycle}")
                     return cycle
 
         return None

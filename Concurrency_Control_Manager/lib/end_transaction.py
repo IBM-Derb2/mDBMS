@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
+from .undo_log import UndoLogManager
 
 
 class EndTransactionResult(Enum):
@@ -29,16 +30,17 @@ class EndTransactionReport:
 
 
 class EndTransactionManager:
-    
-    def __init__(self, tx_manager, strategy):
+
+    def __init__(self, tx_manager, strategy, undo_log_manager: Optional[UndoLogManager] = None):
         """
         things / vars yg dedicated for logging/debugging/reporting:
         - end_transaction_history
         - verbose: to toggle debug printing throughout the process
         """
-        
+
         self.tx_manager = tx_manager
         self.strategy = strategy
+        self.undo_log_manager = undo_log_manager if undo_log_manager else UndoLogManager()
         self.end_transaction_history: List[EndTransactionReport] = []
         self.verbose = True # just turn it off kalau gk butuh
     
@@ -72,18 +74,32 @@ class EndTransactionManager:
                 print(f"[EndTxManager] Status saat ini: {tx.status.value}")
                 print(f"{'='*60}")
             
-            # validasi final, cuma kerasa buat validation based strategy since di yg lai udh kehandle
+            # validasi final
             if is_commit:
-                validation_result = self._perform_final_validation(transaction_id)
-                if not validation_result['valid']:
-                    validation_errors.extend(validation_result['errors'])
-                    result = EndTransactionResult.VALIDATION_FAILED
-                    if self.verbose:
-                        print(f"[EndTxManager] ✗ Validasi akhir GAGAL:")
-                        for error in validation_result['errors']:
-                            print(f"  - {error}")
-                    # gagal, paksa abort
-                    is_commit = False
+                # Use strategy-specific validation if available (for OCC)
+                if hasattr(self.strategy, 'validate_for_commit'):
+                    is_valid, strategy_errors = self.strategy.validate_for_commit(transaction_id)
+                    if not is_valid:
+                        validation_errors.extend(strategy_errors)
+                        result = EndTransactionResult.VALIDATION_FAILED
+                        if self.verbose:
+                            print(f"[EndTxManager] [FAIL] Validasi strategi GAGAL:")
+                            for error in strategy_errors:
+                                print(f"  - {error}")
+                        # gagal, paksa abort
+                        is_commit = False
+                else:
+                    # Fallback to generic validation for other strategies
+                    validation_result = self._perform_final_validation(transaction_id)
+                    if not validation_result['valid']:
+                        validation_errors.extend(validation_result['errors'])
+                        result = EndTransactionResult.VALIDATION_FAILED
+                        if self.verbose:
+                            print(f"[EndTxManager] [FAIL] Validasi akhir GAGAL:")
+                            for error in validation_result['errors']:
+                                print(f"  - {error}")
+                        # gagal, paksa abort
+                        is_commit = False
             
             # get daftar resources yang perlu di cleanup
             accessed_objects = tx.get_accessed_objects()
@@ -112,12 +128,26 @@ class EndTransactionManager:
                     print(f"\n[EndTxManager] Melakukan COMMIT...")
                 # self.tx_manager.mark_partially_committed(transaction_id)
                 self.tx_manager.commit_transaction(transaction_id)
+
+                # Mark as committed in strategy (for OCC)
+                if hasattr(self.strategy, 'commit_validation'):
+                    self.strategy.commit_validation(transaction_id)
+
+                # Clean up undo logs after successful commit
+                self.undo_log_manager.commit_transaction(transaction_id)
                 resources_cleaned.append(f"Transaction {transaction_id} committed")
+                resources_cleaned.append(f"Undo logs cleared for TX {transaction_id}")
             else:
                 if self.verbose:
                     print(f"\n[EndTxManager] Melakukan ABORT...")
+
+                # Rollback changes using undo log
+                if self.undo_log_manager.has_logs(transaction_id):
+                    rolled_back = self.undo_log_manager.abort_transaction(transaction_id)
+                    resources_cleaned.append(f"Rolled back {len(rolled_back)} operations for TX {transaction_id}")
+
                 self.tx_manager.fail_transaction(
-                    transaction_id, 
+                    transaction_id,
                     "Validation failed" if validation_errors else "User requested abort"
                 )
                 self.tx_manager.abort_transaction(transaction_id)
@@ -135,7 +165,7 @@ class EndTransactionManager:
             result = EndTransactionResult.RESOURCE_CLEANUP_FAILED
             validation_errors.append(f"Error: {str(e)}")
             if self.verbose:
-                print(f"\n[EndTxManager] ✗ Error saat end transaction: {e}")
+                print(f"\n[EndTxManager] [FAIL] Error saat end transaction: {e}")
                 print(f"{'='*60}\n")
         
         # Hitung execution time
