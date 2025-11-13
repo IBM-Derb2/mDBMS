@@ -16,8 +16,19 @@ class TestStorageEngine(unittest.TestCase):
             conditions=[Condition("GPA", ">", 3.5)]
         )
         rows = self.storage.read_block(dr)
+
+        print("\n=== test_read_block Result ===")
+        print(f"Rows(")
+        print(f"    data=[")
+        for i, row in enumerate(rows.data):
+            comma = "," if i < len(rows.data) - 1 else ""
+            print(f"        {row}{comma}")
+        print(f"    ],")
+        print(f"    rows_count={rows.rows_count},")
+        print(f"    idx={rows.idx}")
+        print(f")")
+
         self.assertGreater(rows.rows_count, 0)
-        print("Read Block -> OK, hasil:", rows.rows_count)
 
     def test_get_stats(self):
         stats = self.storage.get_stats("student")
