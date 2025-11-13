@@ -33,9 +33,10 @@ class RecoveryEngine:
 
                 # undo writes dari transaksi aborted
                 if tx in aborted:
-                    old = entry.old_data
-                    print(f"[Recovery] Meng-undo WRITE untuk transaksi {tx} pada tabel {entry.table_name}")
-                    self.query_processor.apply_undo(entry.table_name or "<unknown>", old, entry.new_data)
+                        pk = getattr(entry, "pk_value", None)
+                        old = entry.old_data
+                        print(f"[Recovery] Meng-undo WRITE untuk transaksi {tx} pada tabel {entry.table_name}; pk={pk}")
+                        self.query_processor.apply_undo(entry.table_name or "<unknown>", pk, old, entry.new_data)
                 else:
                     print(f"[Recovery] WRITE untuk transaksi {tx} ditemukan sebelum status akhir diketahui; dilewatkan untuk sementara")
 

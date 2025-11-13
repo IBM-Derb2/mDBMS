@@ -20,7 +20,7 @@ class MockExecutionResult:
 @dataclass
 class MockChangeReport:
     table_name: str
-    pk_value: Any
+    pk_value: dict[str, Any] = None
     old_data: Union[dict, None] = None # data lama (utk update/delelte)
     new_data: Union[dict, None] = None # data baru (utk update/insert)
 

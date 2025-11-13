@@ -14,6 +14,7 @@ log_writer.write_to_file(log_start)
 
 laporan_insert = MockChangeReport(
     table_name="mahasiswa",
+    pk_value={"nim": "13520001"},
     old_data=None, # Karena INSERT, old_data kosong
     new_data={"nim": "13520001", "nama": "Budi"}
 )
@@ -35,6 +36,7 @@ log_writer.write_to_file(log_start_2)
 
 laporan_update = MockChangeReport(
     table_name="mahasiswa",
+    pk_value={"nim": "13520001"},
     old_data={"nim": "13520001", "nama": "Budi"},
     new_data={"nim": "13520001", "nama": "Budi Hartono"}
 )

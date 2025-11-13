@@ -44,6 +44,7 @@ class LogParser:
                 transaction_id=int(d.get("transaction_id", -1)),
                 action=d.get("action"),
                 table_name=d.get("table_name"),
+                pk_value=d.get("pk_value"),
                 old_data=d.get("old_data"),
                 new_data=d.get("new_data"),
                 raw_log=d,
