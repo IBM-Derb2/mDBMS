@@ -3,8 +3,9 @@
 import logging
 from typing import Optional, Union
 
-from .types import ParsedQuery, QueryTree
+from .types import ParsedQuery
 from .lib.parse_query import internal_parse_query
+from .lib.get_cost import internal_get_cost
 
 
 class OptimizationEngine:
@@ -68,55 +69,21 @@ class OptimizationEngine:
         """
         Menghitung biaya eksekusi dari query yang diberikan,
         dan adalah method pendukung untuk method optimize_query.
+
+        Args:
+            query: Either a SQL query string or a ParsedQuery object
+
+        Returns:
+            The total cost of executing the query
         """
         if isinstance(query, str):
             parsed_query = self.parse_query(query)
-        else: parsed_query = query
-        return self._calculate_node_cost(parsed_query.query_tree)
-    
-    def _calculate_node_cost(self, node: QueryTree) -> int:
-        """
-        Menghitung biaya eksekusi dari sebuah node dalam pohon query secara rekursif.
-        Implementasi spesifik dari perhitungan biaya tergantung pada jenis node
-        dan atribut-atributnya.
-        """
-        node_cost = self._get_operation_cost(node)
-        children_cost = sum(self._calculate_node_cost(child) for child in node.children)
-        return node_cost + children_cost
-    
-    def _get_operation_cost(self, node: QueryTree) -> int:
-        """
-        Mendapatkan biaya operasi untuk jenis node tertentu.
-        Implementasi spesifik dari biaya tergantung pada jenis node.
-        """
-        if node.type in ['COLUMNS', 'FROM', 'WHERE', 'SET', 'VALUES', 'COLUMN_DEFS']:
-            return 0
-        elif node.type == 'TABLE':
-            return 50 #Placeholder Value
-        elif node.type == 'COLUMN':
-            return 1
-        elif node.type == 'LITERAL':
-            return 0
-        elif node.type == 'OPERATOR':
-            if node.val in ['AND', 'OR']:
-                return 50 #Placeholder Value
-            elif node.val in ['=', '!=', '<', '<=', '>', '>=', '<>']:
-                return 50 #Placeholder Value
-            elif node.val in ['+', '-', '*', '/', '%']:
-                return 50
-            else: #IN, BETWEEN, LIKE, ETC
-                return 50 #Placeholder Value
-        elif node.type == 'JOIN':
-            if node.val == 'NATURAL':
-                return 500 #Placeholder Value
-            else:
-                return 300 #Placeholder Value
-        elif node.type == 'SELECT':
-            return 50
-        elif node.type == 'INSERT':
-            return 100
-        elif node.type == 'UPDATE':
-            return 150
-        elif node.type == 'DELETE':
-            return 150
-        else: return 1
+        else:
+            parsed_query = query
+
+        self._log(
+            'debug', f"Calculating cost for query type: {parsed_query.query_tree.type}")
+        cost = internal_get_cost(parsed_query, self.logger)
+        self._log('debug', f"Total query cost: {cost}")
+
+        return cost
