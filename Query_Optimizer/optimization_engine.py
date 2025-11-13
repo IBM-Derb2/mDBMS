@@ -5,6 +5,7 @@ from typing import Optional, Union
 
 from .types import ParsedQuery
 from .lib.parse_query import internal_parse_query
+from .lib.get_cost import internal_get_cost
 
 
 class OptimizationEngine:
@@ -68,7 +69,21 @@ class OptimizationEngine:
         """
         Menghitung biaya eksekusi dari query yang diberikan,
         dan adalah method pendukung untuk method optimize_query.
+
+        Args:
+            query: Either a SQL query string or a ParsedQuery object
+
+        Returns:
+            The total cost of executing the query
         """
-        # TODO: Implement sophisticated cost calculation
-        # For now, return a placeholder cost
-        return 0
+        if isinstance(query, str):
+            parsed_query = self.parse_query(query)
+        else:
+            parsed_query = query
+
+        self._log(
+            'debug', f"Calculating cost for query type: {parsed_query.query_tree.type}")
+        cost = internal_get_cost(parsed_query, self.logger)
+        self._log('debug', f"Total query cost: {cost}")
+
+        return cost

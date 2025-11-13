@@ -74,6 +74,8 @@ class QueryParsers(BaseParser):
 
         while True:
             # Check for * (all columns)
+            if not self.current_token:
+                raise ValueError("Unexpected end of input while parsing SELECT column list")
             if self.current_token.value == '*':
                 columns.append(QueryTree(type='COLUMN', val='*'))
                 self._advance()
@@ -87,9 +89,10 @@ class QueryParsers(BaseParser):
                 # Check for AS alias
                 if self._match_keyword('AS'):
                     self._advance()
-                    if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                    if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                        bad = self.current_token.value if self.current_token else 'EOF'
                         raise ValueError(
-                            f"Expected alias name, got '{self.current_token.value}'")
+                            f"Expected alias name, got '{bad}'")
                     alias = self.current_token.value
                     self._advance()
                     col_expr = QueryTree(
@@ -120,9 +123,8 @@ class QueryParsers(BaseParser):
             elif self._match_keyword('JOIN') or self._match_keyword('INNER') or \
                     self._match_keyword('NATURAL'):
                 tables.append(self._parse_join())
-            elif self.current_token.type == 'IDENTIFIER' and \
+            elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
                     self.current_token.value.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
-                # Reject unsupported JOIN types
                 raise ValueError(
                     f"Unsupported JOIN type: {self.current_token.value.upper()}")
             else:
@@ -132,9 +134,10 @@ class QueryParsers(BaseParser):
 
     def _parse_table_reference(self) -> QueryTree:
         """Parse a table reference with optional alias (supports schema.table syntax)"""
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+        if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
-                f"Expected table name, got '{self.current_token.value}'")
+                f"Expected table name, got '{bad}'")
 
         table_name = self.current_token.value
         self._advance()
@@ -142,9 +145,10 @@ class QueryParsers(BaseParser):
         # Check for schema.table syntax
         if self._match_punctuation('.'):
             self._advance()  # Skip the dot
-            if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
-                    f"Expected table name after schema, got '{self.current_token.value}'")
+                    f"Expected table name after schema, got '{bad}'")
             # Combine schema and table name
             table_name = table_name + '.' + self.current_token.value
             self._advance()
@@ -154,14 +158,15 @@ class QueryParsers(BaseParser):
         # Check for AS alias
         if self._match_keyword('AS'):
             self._advance()
-            if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
-                    f"Expected alias name, got '{self.current_token.value}'")
+                    f"Expected alias name, got '{bad}'")
             alias = self.current_token.value
             self._advance()
             return QueryTree(type='ALIAS', val=alias, childs=[table_node])
         # Check for implicit alias (no AS keyword)
-        elif self.current_token.type == 'IDENTIFIER' and \
+        elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
                 not self._match_keyword('WHERE') and \
                 not self._match_keyword('JOIN') and \
                 not self._match_punctuation(',') and \
@@ -179,6 +184,7 @@ class QueryParsers(BaseParser):
     def _parse_join(self) -> QueryTree:
         """Parse JOIN clause - supports only INNER JOIN (with ON) and NATURAL JOIN"""
         join_type = 'INNER'
+        start_pos = self.position
 
         # Check for NATURAL JOIN
         if self._match_keyword('NATURAL'):
@@ -226,34 +232,51 @@ class QueryParsers(BaseParser):
         """Parse ORDER BY clause"""
         self._expect_keyword('ORDER')
         self._expect_keyword('BY')
+        start_pos = self.position
 
-        # Parse column
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
-            raise ValueError(
-                f"Expected column name in ORDER BY, got '{self.current_token.value}'")
-
-        column = self.current_token.value
-        self._advance()
-
-        # Parse ASC/DESC
-        direction = 'ASC'
-        if self._match_keyword('ASC'):
+        columns = []
+        directions = []
+        while True:
+            # Parse column token (optionally qualified e.g., alias.column)
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
+                raise ValueError(
+                    f"Expected column name in ORDER BY, got '{bad}'")
+            column_name = self.current_token.value
             self._advance()
-        elif self._match_keyword('DESC'):
-            direction = 'DESC'
-            self._advance()
-
-        col_node = QueryTree(type='COLUMN', val=column)
-        return QueryTree(type='ORDER_BY', val=direction, childs=[col_node])
+            if self._match_punctuation('.'):
+                self._advance()
+                if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                    bad = self.current_token.value if self.current_token else 'EOF'
+                    raise ValueError(
+                        f"Expected column name after '.', got '{bad}'")
+                column_name = column_name + '.' + self.current_token.value
+                self._advance()
+            direction = 'ASC'
+            if self._match_keyword('ASC'):
+                self._advance()
+            elif self._match_keyword('DESC'):
+                direction = 'DESC'
+                self._advance()
+            columns.append(QueryTree(type='COLUMN', val=column_name))
+            directions.append(direction)
+            if self._match_punctuation(','):
+                self._advance()
+                continue
+            else:
+                break
+        order_children = []
+        for col, dirn in zip(columns, directions):
+            order_children.append(QueryTree(type='ORDER_ITEM', val=dirn, childs=[col]))
+        return QueryTree(type='ORDER_BY', val='ORDER_BY', childs=order_children)
 
     def _parse_limit_clause(self) -> QueryTree:
         """Parse LIMIT clause"""
         self._expect_keyword('LIMIT')
-
-        if self.current_token.type != 'NUMBER':
+        if not self.current_token or self.current_token.type != 'NUMBER':
+            bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
-                f"Expected number in LIMIT, got '{self.current_token.value}'")
-
+                f"Expected number in LIMIT, got '{bad}'")
         limit_val = self.current_token.value
         self._advance()
 
@@ -262,11 +285,10 @@ class QueryParsers(BaseParser):
     def parse_update(self) -> QueryTree:
         """Parse UPDATE statement"""
         self._expect_keyword('UPDATE')
-
-        # Parse table name
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+        if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
-                f"Expected table name, got '{self.current_token.value}'")
+                f"Expected table name, got '{bad}'")
         table_name = self.current_token.value
         self._advance()
 
@@ -293,17 +315,18 @@ class QueryParsers(BaseParser):
 
         while True:
             # Parse column = expression
-            if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
-                    f"Expected column name in SET, got '{self.current_token.value}'")
-
+                    f"Expected column name in SET, got '{bad}'")
             column = self.current_token.value
             self._advance()
 
             # Expect = operator
             if not self._match_operator('='):
+                bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
-                    f"Expected '=' in SET clause, got '{self.current_token.value}'")
+                    f"Expected '=' in SET clause, got '{bad}'")
             self._advance()
 
             self._sync_expression_parser()
@@ -328,11 +351,10 @@ class QueryParsers(BaseParser):
         """Parse DELETE statement"""
         self._expect_keyword('DELETE')
         self._expect_keyword('FROM')
-
-        # Parse table name
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+        if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
-                f"Expected table name, got '{self.current_token.value}'")
+                f"Expected table name, got '{bad}'")
         table_name = self.current_token.value
         self._advance()
 
@@ -353,11 +375,10 @@ class QueryParsers(BaseParser):
         """Parse INSERT statement"""
         self._expect_keyword('INSERT')
         self._expect_keyword('INTO')
-
-        # Parse table name
-        if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+        if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
-                f"Expected table name, got '{self.current_token.value}'")
+                f"Expected table name, got '{bad}'")
         table_name = self.current_token.value
         self._advance()
 
@@ -385,12 +406,11 @@ class QueryParsers(BaseParser):
 
         columns = []
         while True:
-            if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+            if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
+                bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
-                    f"Expected column name, got '{self.current_token.value}'")
-
-            columns.append(
-                QueryTree(type='COLUMN', val=self.current_token.value))
+                    f"Expected column name, got '{bad}'")
+            columns.append(QueryTree(type='COLUMN', val=self.current_token.value))
             self._advance()
 
             if self._match_punctuation(','):
