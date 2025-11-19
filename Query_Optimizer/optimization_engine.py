@@ -52,18 +52,27 @@ class OptimizationEngine:
         ParsedQuery. This method expects a ParsedQuery instance (the caller
         is responsible for parsing raw SQL text via `parse_query`).
 
-        Note: optimization logic is currently a no-op and simply returns the
-        provided ParsedQuery. Real optimization (rule-based or GA) should be
-        implemented here in the future.
+        The optimization applies equivalence rules including:
+        - Selection decomposition and reordering
+        - Projection elimination
+        - Join order optimization
+        - Selection/projection push-down
         """
         if not isinstance(parsed_query, ParsedQuery):
             raise TypeError("optimize_query requires a ParsedQuery instance")
 
-        # Simple pass-through for now. Log the action for visibility.
         self._log(
             'info', f"Optimizing parsed query type: {parsed_query.query_tree.type}")
-        # TODO: replace with actual optimization logic
-        return parsed_query
+
+        # Import and use the internal optimizer
+        from .lib.optimize_query import internal_optimize_query
+
+        # Apply optimization
+        optimized_query = internal_optimize_query(parsed_query, self.logger)
+
+        self._log('info', "Optimization completed")
+
+        return optimized_query
 
     def get_cost(self, query: Union[str, ParsedQuery]) -> int:
         """

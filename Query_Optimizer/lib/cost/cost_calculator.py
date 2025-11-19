@@ -5,6 +5,15 @@ Handles calculation of query execution costs for optimization.
 
 from ...types import QueryTree
 
+# Feature flag to enable statistics-based costing
+USE_STATISTICS = True
+
+if USE_STATISTICS:
+    try:
+        from .statistics_based_calculator import calculate_node_cost_with_stats
+    except ImportError:
+        USE_STATISTICS = False
+
 
 def calculate_node_cost(node: QueryTree) -> int:
     """
@@ -18,6 +27,18 @@ def calculate_node_cost(node: QueryTree) -> int:
     Returns:
         Total cost of the node including its children
     """
+    # Use statistics-based calculation if available
+    if USE_STATISTICS:
+        try:
+            cost, _ = calculate_node_cost_with_stats(node)
+            return cost
+        except Exception as e:
+            # Fall back to simple calculation if stats fail
+            print(f"⚠️ Stats-based cost calculation failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Simple calculation without statistics
     node_cost = get_operation_cost(node)
     children_cost = sum(calculate_node_cost(child) for child in node.childs)
     return node_cost + children_cost
