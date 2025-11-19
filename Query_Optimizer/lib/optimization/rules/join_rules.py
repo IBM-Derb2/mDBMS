@@ -12,6 +12,7 @@ from typing import Optional, List
 import logging
 from Query_Optimizer.types import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
+from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
 
 class JoinRule(OptimizationRule):
@@ -73,7 +74,7 @@ class JoinRule(OptimizationRule):
         joins = self._extract_joins(tree)
 
         # Step 2: Calculate cost for different orderings
-        best_order = self._find_best_join_order(joins)
+        best_order = self._find_best_join_order(joins, tree)
 
         # Step 3: Reconstruct tree with optimal order
         optimized_tree = self._reconstruct_join_tree(tree, best_order)
@@ -90,7 +91,7 @@ class JoinRule(OptimizationRule):
         self._log('debug', f"Extracted {len(join_nodes)} join operations")
         return join_nodes
 
-    def _find_best_join_order(self, joins: List[QueryTree]) -> List[QueryTree]:
+    def _find_best_join_order(self, joins: List[QueryTree], tree: QueryTree) -> List[QueryTree]:
         """
         Find the best join order using heuristics or cost calculation
 
@@ -99,6 +100,7 @@ class JoinRule(OptimizationRule):
         2. Prioritize joins with selection conditions
         3. Consider intermediate result sizes
         """
+        from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
         if len(joins) <= 1:
             return joins
 
@@ -107,15 +109,92 @@ class JoinRule(OptimizationRule):
         # Heuristic: Sort joins by estimated selectivity
         # Joins with more selective conditions should be executed first
         # This is a simplified approach - full implementation would use statistics
+        # Table row count
+        tables = []
+        tables.extend(TreeAnalyzer.extract_tables(tree))
+        
+        conditions = []
+        for join in joins:
+            conditions.append(self._extract_join_conditions(join))
 
+        selectivity_analysis = self._analyze_joins_selectivity(conditions)
+        ordered_join = []
+        for sel in selectivity_analysis:
+            for join in joins:
+                if sel['condition'] == self._extract_join_conditions(join):
+                    ordered_join.append(join)
+                    break
         # For now, keep original order but log the optimization opportunity
-        self._log('debug', "Join reordering opportunity identified")
+        # self._log('debug', "Join reordering opportunity identified")
 
-        return joins
+        return ordered_join
 
+    def _analyze_joins_selectivity(self, condition: List[dict]) -> List[dict]:
+        """Analyze selectivity of a join based on conditions and table stats"""
+        analyzed = []
+        for cond in condition:
+            left_col = cond['left'].split('.')[1]
+            right_col = cond['right'].split('.')[1]
+            selectivity = self._estimate_join_selectivity(
+                cond['left_table'], cond['right_table'], left_col, right_col, cond['operator'])
+            analyzed.append({
+                'condition': cond,
+                'selectivity': selectivity
+            })
+        analyzed.sort(key=lambda x: x['selectivity'])
+        return analyzed
+
+    def _estimate_join_selectivity(self, left_table: str, right_table: str, left_col, right_col, operator) -> float:
+        """Estimate selectivity of a join condition"""
+        from Query_Optimizer.lib.cost.statistics import get_statistics_manager
+        stats_mgr = get_statistics_manager()
+        # Fetch statistics
+        left_stats = stats_mgr.get_table_stats(left_table)
+        right_stats = stats_mgr.get_table_stats(right_table)
+        # Simplified selectivity estimation
+        if operator == '=':
+            max_distinct = max(left_stats.column_stats[left_col]["distinct_values"],
+                               right_stats.column_stats[right_col]["distinct_values"])
+            selectivity = 1.0 / max_distinct if max_distinct > 0 else 1.0
+        elif operator in ('<', '>', '<=', '>='):
+            selectivity = 0.33 # Rough estimate for range joins
+        elif operator == '!=':
+            max_distinct = max(left_stats.column_stats[left_col]["distinct_values"],
+                               right_stats.column_stats[right_col]["distinct_values"])
+            selectivity = 1-(1.0 / max_distinct) if max_distinct > 0 else 0
+        return selectivity
+
+    def _extract_join_conditions(self, join:QueryTree) -> List[dict]:
+        """Extract join conditions from a join node"""
+        conditions = []
+        for child in join.childs:
+            if child.type == 'OPERATOR':
+                left_table = child.childs[0].val.split('.')[0]
+                right_table = child.childs[1].val.split('.')[0]
+                left = child.childs[0].val
+                right = child.childs[1].val
+                operator = child.val
+                conditions.append({
+                    'left_table': left_table,
+                    'right_table': right_table,
+                    'left': left,
+                    'right': right,
+                    'operator': operator
+                })
+        return conditions
+    
     def _reconstruct_join_tree(self, original_tree: QueryTree, ordered_joins: List[QueryTree]) -> QueryTree:
         """Reconstruct the query tree with optimized join order"""
+        from Query_Optimizer.lib.optimization.tree_utils import TreeManipulator, TreeAnalyzer
         # TODO: Implement tree reconstruction
+        self._log('debug', "Reconstructing join tree with optimized order")
+        from_node = TreeAnalyzer.find_nodes_by_type(original_tree, 'FROM')[0]
+        for join in ordered_joins:
+            join.parent = from_node
+        from_node.childs = ordered_joins
+        first_table_name = ordered_joins[0].childs[1].childs[0].val.split('.')[0]
+        first_table_node = QueryTree(type='TABLE', val=first_table_name, parent=from_node)
+        from_node.childs.insert(0, first_table_node)
         return original_tree
 
     def _can_apply_commutativity(self, join: QueryTree) -> bool:
