@@ -16,6 +16,8 @@ from typing import Optional, Set
 import logging
 from Query_Optimizer.types import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
+from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
+
 
 
 class DistributionRule(OptimizationRule):
@@ -38,6 +40,16 @@ class DistributionRule(OptimizationRule):
         # Check if we have selection/projection over join
         return (self._has_selection_over_join(tree) or
                 self._has_projection_over_join(tree))
+    
+    def _link_parents(self, node: QueryTree, parent: Optional[QueryTree] = None):
+        """
+        Helper rekursif untuk mengisi pointer parent yang hilang.
+        Ini penting agar TreeManipulator bisa bekerja.
+        """
+        node.parent = parent
+        if node.childs:
+            for child in node.childs:
+                self._link_parents(child, node)
 
     def apply(self, tree: QueryTree) -> QueryTree:
         """
@@ -46,6 +58,8 @@ class DistributionRule(OptimizationRule):
         Push selections and projections down to reduce intermediate result sizes
         """
         self._log('info', f"Applying distribution optimization")
+
+        self._link_parents(tree)
 
         # Rule 8: Push selections down (most beneficial)
         if self._has_selection_over_join(tree):
@@ -180,24 +194,63 @@ class DistributionRule(OptimizationRule):
         return relation_conditions
 
     def _apply_pushed_selections(self, tree: QueryTree, relation_conditions: dict) -> QueryTree:
-        """Apply selection conditions at appropriate tree levels"""
-        from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
+        from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
 
         if not relation_conditions:
             return tree
 
-        # For each table with conditions, try to push down
-        for table, conditions in relation_conditions.items():
-            if table == '__join__':
-                # These are join conditions, keep at join level
-                continue
+        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
+        if not table_nodes:
+            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
 
-            self._log(
-                'debug', f"Pushing {len(conditions)} conditions to table {table}")
+        for node in table_nodes:
+            target_node = node
+            lookup_name = node.val
 
-            # Find table nodes and insert WHERE above them
-            # This is a simplified approach - full implementation would
-            # require more sophisticated tree manipulation
+            # Handle Alias
+            if node.parent and node.parent.type == 'ALIAS':
+                target_node = node.parent
+                lookup_name = target_node.val
+
+            if lookup_name in relation_conditions:
+                conditions = relation_conditions[lookup_name]
+                
+                expr_parts = []
+                for cond in conditions:
+                    if 'expression' in cond:
+                        expr_parts.append(cond['expression'])
+                    elif 'left' in cond and 'operator' in cond:
+                        right_val = cond.get('right', '')
+                        expr_parts.append(f"{cond['left']} {cond['operator']} {right_val}")
+                
+                if not expr_parts: continue
+
+                combined_expression = " AND ".join(expr_parts)
+
+                # cek duplikasi
+                curr = target_node.parent
+                already_exists = False
+                while curr:
+                    # Berhenti jika ketemu boundary (JOIN/SELECT) agar tidak scan terlalu jauh
+                    if curr.type in ('JOIN', 'SELECT', 'FROM'): 
+                        break
+                    if curr.type == 'WHERE' and curr.val == combined_expression:
+                        already_exists = True
+                        break
+                    curr = curr.parent
+                
+                if already_exists:
+                    continue 
+
+                self._log('debug', f"Pushing conditions to {lookup_name}")
+                
+                new_where_node = QueryTree(
+                    type='WHERE',
+                    val=combined_expression,
+                    childs=[],
+                    parent=None
+                )
+                TreeManipulator.insert_node_above(target_node, new_where_node)
 
         return tree
 
@@ -235,18 +288,55 @@ class DistributionRule(OptimizationRule):
         self._log('debug', f"Join attributes: {join_attributes}")
         return join_attributes
 
-    def _apply_pushed_projections(self, tree: QueryTree,
-                                  required_columns: Set[str],
-                                  join_attributes: Set[str]) -> QueryTree:
-        """Apply projection operations at appropriate tree levels"""
-        # Combine required columns with join attributes
+    def _apply_pushed_projections(self, tree: QueryTree, 
+                                required_columns: Set[str], 
+                                join_attributes: Set[str]) -> QueryTree:
+        from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
+
         all_needed_columns = required_columns.union(join_attributes)
+        if not all_needed_columns: return tree
+            
+        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
+        if not table_nodes: table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
 
-        self._log(
-            'debug', f"Pushing projection with {len(all_needed_columns)} columns")
+        for node in table_nodes:
+            target_node = node
+            lookup_name = node.val 
 
-        # Note: Full implementation would insert projection nodes above base tables
-        # keeping only the columns in all_needed_columns
-        # This reduces data transmission in joins
+            if node.parent and node.parent.type == 'ALIAS':
+                target_node = node.parent
+                lookup_name = target_node.val
+            
+            table_columns = set()
+            for col in all_needed_columns:
+                if '.' in col:
+                    t_part, c_part = col.split('.', 1)
+                    if t_part == lookup_name:
+                        table_columns.add(col)
+            
+            if table_columns:
+                proj_val = ", ".join(sorted(list(table_columns)))
+
+                # cek duplikasi
+                curr = target_node.parent
+                already_exists = False
+                while curr:
+                    if curr.type in ('JOIN', 'SELECT', 'FROM'): break
+                    if curr.type == 'PROJECT' and curr.val == proj_val:
+                        already_exists = True
+                        break
+                    curr = curr.parent
+                
+                if already_exists: continue
+                
+                self._log('debug', f"Pushing projection to {lookup_name}")
+                
+                new_project_node = QueryTree(
+                    type='PROJECT',
+                    val=proj_val,
+                    childs=[],
+                    parent=None
+                )
+                TreeManipulator.insert_node_above(target_node, new_project_node)
 
         return tree
