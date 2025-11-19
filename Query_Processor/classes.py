@@ -1,5 +1,6 @@
 from datetime import datetime
 import re
+import time
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Union
 
@@ -7,6 +8,8 @@ from typing import List, Any, Optional, Union
 class Rows:
     # Menampung hasil data dari eksekusi query.
     data: List[dict] = field(default_factory=list)
+    rows_count: int = 0
+    message: str = ""
 
 @dataclass
 class ExecutionResult:
@@ -20,89 +23,140 @@ class ExecutionResult:
 
 
 class QueryProcessor:
-    # Komponen utama
     def __init__(self, optimizer, storage_manager, cc_manager, fr_manager):
         self.optimizer = optimizer
         self.storage_manager = storage_manager
         self.cc_manager = cc_manager
         self.fr_manager = fr_manager
         self.current_transaction_id = None
+        self.multiple_transaction = False
+        self.result_storage = []
+        self.query_storage = []
 
-    def execute_query(self, query: str) -> ExecutionResult:
-        # Menerima string query, memprosesnya, dan mengembalikan ExecutionResult.
+    def execute_query(self, query: str) -> List[ExecutionResult]:
+        query = query.strip()
         
-        # Validasi input
-        if not query or not query.strip():
-            return ExecutionResult(
+        # Validasi input kosong
+        if not query:
+            return [ExecutionResult(
                 transaction_id=self.current_transaction_id or 0,
-                query=query or "",
+                query="",
                 timestamp=datetime.now(),
                 message="Error: Empty query",
                 rows_count=0
-            )
+            )]
         
-        print(f"\n[QP] Received query: '{query}'")
         query_upper = query.upper().strip()
 
+        # Handle BEGIN TRANSACTION
+        if query_upper.startswith("BEGIN"):
+            return [self._handle_begin_transaction(query)]
+        
+        # Handle COMMIT
+        if query_upper.startswith("COMMIT"):
+            try:
+                for q in self.query_storage:
+                    if not q.endswith(";"):
+                        raise ValueError("Query must end with a semicolon")
+                    
+                    parsed_query = self.optimizer.parse_query(q)
+                    result = self._process_node(parsed_query.query_tree)
+                    
+                    execution_result = ExecutionResult(
+                        data=result,
+                        message="Query executed successfully",
+                        query=q,
+                        transaction_id=self.current_transaction_id,
+                        timestamp=datetime.now(),
+                        rows_count=result.rows_count if result else 0
+                    )
+                    
+                    if self._is_write_query(q):
+                        self.fr_manager.write_log(execution_result)
+                    
+                    self.result_storage.append(execution_result)
+            except Exception as e:
+                self._rollback()
+                return [ExecutionResult(
+                    transaction_id=self.current_transaction_id or 0,
+                    query=query,
+                    timestamp=datetime.now(),
+                    message=f"Error processing transaction: {str(e)}",
+                    rows_count=0
+                )]
+            
+            self._commit()
+            final_result = self.result_storage.copy()
+            self.result_storage.clear()
+            self.query_storage.clear()
+            return final_result
+
+        # Handle ROLLBACK
+        if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
+            return [self._handle_rollback(query)]
+
+        # Jika mode multiple transaction aktif, simpan query
+        if self.multiple_transaction:
+            self.query_storage.append(query)
+            return [] 
+
+        # Single query execution
+        if not query.endswith(";"):
+            return [ExecutionResult(
+                transaction_id=self.current_transaction_id or 0,
+                query=query,
+                timestamp=datetime.now(),
+                message="Error: Query must end with a semicolon",
+                rows_count=0
+            )]
+
         try:
-            # Transaction
-            if query_upper.startswith("BEGIN TRANSACTION") or query_upper == "BEGIN":
-                return self._handle_begin_transaction(query)
-            
-            if query_upper.startswith("COMMIT"):
-                return self._handle_commit(query)
-            
-            if query_upper.startswith("ROLLBACK"):
-                return self._handle_rollback(query)
-
-            # DML/DDL
+            is_implicit = False
             if self.current_transaction_id is None:
-                # Auto-begin transaction untuk single statement
-                print("[QP] No active transaction. Auto-beginning new transaction.")
                 self._handle_begin_transaction("BEGIN TRANSACTION")
-
-            # Parsing untuk menentukan jenis query
-            if query_upper.startswith("SELECT"):
-                result = self._handle_select(query)
-            elif query_upper.startswith("UPDATE"):
-                result = self._handle_update(query)
-            elif query_upper.startswith("DELETE"):
-                result = self._handle_delete(query)
-            elif query_upper.startswith("INSERT"):
-                result = self._handle_insert(query)
-            elif query_upper.startswith("CREATE TABLE"):
-                result = self._handle_create_table(query)
-            elif query_upper.startswith("DROP TABLE"):
-                result = self._handle_drop_table(query)
-            else:
-                raise ValueError(f"Unsupported query type: {query_upper.split()[0] if query_upper else 'UNKNOWN'}")
-
-            # Jika sukses, log eksekusi
-            self.fr_manager.write_log(result)
-            return result
-
+                is_implicit = True
+            
+            parsed_query = self.optimizer.parse_query(query)
+            result = self._process_node(parsed_query.query_tree)
+            
+            execution_result = ExecutionResult(
+                data=result,
+                message=result.message or "Query executed successfully",
+                query=query,
+                transaction_id=self.current_transaction_id,
+                timestamp=datetime.now(),
+                rows_count=result.rows_count if result else 0
+            )
+            
+            if self._is_write_query(query):
+                self.fr_manager.write_log(execution_result)
+            
+            self._commit()
+            
+            return [execution_result]
+            
         except Exception as e:
             print(f"[QP] Error executing query: {e}")
-            # Rollback transaction on error
-            error_result = ExecutionResult(
+            if self.current_transaction_id is not None:
+                self._rollback()
+            
+            return [ExecutionResult(
                 transaction_id=self.current_transaction_id or 0,
                 query=query,
                 timestamp=datetime.now(),
                 message=f"Error: {str(e)}",
                 rows_count=0
-            )
-            
-            # Log error dan rollback jika ada transaction aktif
-            if self.current_transaction_id is not None:
-                print(f"[QP] Rolling back transaction {self.current_transaction_id} due to error.")
-                self.cc_manager.end_transaction(self.current_transaction_id)
-                self.fr_manager.write_log(error_result)
-                self.current_transaction_id = None
-            
-            return error_result
+            )]
+
+    def _is_write_query(self, query: str) -> bool:
+        if not query: return False
+        parts = query.strip().split(" ")
+        if not parts: return False
+        return parts[0].upper() in ["UPDATE", "INSERT", "DELETE", "CREATE", "DROP"]
 
     def _handle_begin_transaction(self, query):
         self.current_transaction_id = self.cc_manager.begin_transaction()
+        self.multiple_transaction = True
         print(f"[QP] Handled BEGIN TRANSACTION. New TID: {self.current_transaction_id}")
         return ExecutionResult(
             transaction_id=self.current_transaction_id,
@@ -111,254 +165,316 @@ class QueryProcessor:
             message="Transaction started."
         )
 
-    def _handle_commit(self, query):
-        if self.current_transaction_id is None:
-            raise ValueError("No active transaction to commit.")
+    def _handle_rollback(self, query):
+        tid = self.current_transaction_id
+        if self.current_transaction_id is not None:
+            self.cc_manager.abort_transaction(self.current_transaction_id, "User requested")
         
-        self.cc_manager.end_transaction(self.current_transaction_id)
-        print(f"[QP] Handled COMMIT for TID: {self.current_transaction_id}")
+        self.current_transaction_id = None
+        self.multiple_transaction = False
         
-        result = ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message="Transaction committed."
-        )
-        self.fr_manager.write_log(result) # Log commit
-        
-        self.current_transaction_id = None # End local transaction
-        return result
-    
-    def _handle_rollback(self, query) :
-        if self.current_transaction_id is None:
-            raise ValueError("No active transaction to rollback.")
-        
-        print(f"[QP] Handling ROLLBACK for TID: {self.current_transaction_id}")
-        self.cc_manager.end_transaction(self.current_transaction_id)
-        
-        result = ExecutionResult(
-            transaction_id=self.current_transaction_id,
+        return ExecutionResult(
+            transaction_id=tid if tid else 0,
             query=query,
             timestamp=datetime.now(),
             message="Transaction rolled back."
         )
-        self.fr_manager.write_log(result) # Log rollback
-        
-        self.current_transaction_id = None # End local transaction
-        return result
 
-    def _extract_table_name(self, query: str) -> str:
-        # Helper method untuk mengekstrak nama tabel dari query.
-        # Digunakan untuk validasi concurrency control.
-        query_upper = query.upper().strip()
+    def _process_node(self, node) -> Rows:
+        if node is None:
+            return Rows()
+
+        if node.type == "CREATE_TABLE":
+            return self._create_table(node)
+        elif node.type == "DROP_TABLE":
+            return self._drop_table(node)
         
-        # Pattern untuk berbagai jenis query
-        patterns = [
-            r'FROM\s+(\w+)',        # SELECT ... FROM table
-            r'UPDATE\s+(\w+)',      # UPDATE table SET ...
-            r'DELETE\s+FROM\s+(\w+)', # DELETE FROM table
-            r'INSERT\s+INTO\s+(\w+)', # INSERT INTO table
-            r'CREATE\s+TABLE\s+(\w+)', # CREATE TABLE table
-            r'DROP\s+TABLE\s+(\w+)'    # DROP TABLE table
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, query_upper)
-            if match:
-                return match.group(1).lower()
-        
-        return "unknown_table"  # Fallback
+        elif node.type == "PROJECTION":
+            child_result = self._process_node(node.childs[0])
+            return self._select_columns(child_result, node.val)
+            
+        elif node.type == "RELATION":
+            return self._from_table(node)
+            
+        elif node.type == "SELECTION_STMT":
+            return self._process_selection_stmt(node)
+            
+        elif node.type == "ORDER BY":
+            child_result = self._process_node(node.childs[0])
+            return self._order_by(child_result, node.val)
+            
+        elif node.type == "LIMIT":
+            child_result = self._process_node(node.childs[0])
+            return self._limit(child_result, int(node.val))
+            
+        elif node.type == "JOIN":
+            left_result = self._process_node(node.childs[0])
+            right_result = self._process_node(node.childs[1])
+            return self._nested_loop_join(left_result, right_result, node.val)
+            
+        elif node.type == "CROSS":
+            return self._cartesian(node)
+
+        elif node.type == "UPDATE":
+            return self._update_table(node)
+            
+        elif node.type == "INSERT":
+            return self._insert_table(node)
+            
+        elif node.type == "DELETE":
+            return self._delete_table(node)
+            
+        else:
+            return Rows(data=[], rows_count=0)
     
-    def _execute_plan(self, query, parsed_query):
-        # Helper DML
+    def _from_table(self, node):
+        from Storage_Manager.utils import DataRetrieval
+        table_name = node.val
+        self._validate_ccm(table_name, "read")
+        data_retrieval = DataRetrieval(table=table_name, column=["*"], conditions=[])
+        storage_rows = self.storage_manager.read_block(data_retrieval)
+        return self._convert_to_qp_rows(storage_rows)
+
+    def _convert_to_qp_rows(self, storage_rows) -> Rows:
+        data_list = []
+        if hasattr(storage_rows, 'data'):
+            data_list = storage_rows.data
+        return Rows(data=data_list, rows_count=len(data_list))
+    
+    def _select_columns(self, data: Rows, select_cols) -> Rows:
+        if select_cols == ["*"] or select_cols == "*":
+            if not isinstance(data, Rows): return self._convert_to_qp_rows(data)
+            return data
+        if isinstance(select_cols, str): select_cols = [select_cols]
+        result_data = []
+        for row in data.data:
+            result_row = {}
+            for col in select_cols:
+                col_clean = col.split(".")[-1].lower()
+                # Case insensitive search
+                for k, v in row.items():
+                    if k.lower() == col_clean:
+                        result_row[k] = v
+                        break
+            result_data.append(result_row)
+        return Rows(data=result_data, rows_count=len(result_data))
+
+    def _process_selection_stmt(self, node) -> Rows:
+        base_rows = self._process_node(node.childs[0])
+        if len(node.childs) < 2: return base_rows
+        return self._apply_condition(base_rows, node.childs[1])
+
+    def _apply_condition(self, rows: Rows, condition_node) -> Rows:
+        if rows.rows_count == 0: return rows
+        rows_data = rows.data
         
-        # Dapatkan query plan
-        query_plan = self.optimizer.optimize_query(parsed_query)
-        # print(f"[QP] Got optimized plan: {query_plan.plan_details}")
-
-        # Validasi objek ke Concurrency Control
-        table_name = self._extract_table_name(query)
-        action = "read"
-        
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, action
-        )
-        print(f"[QP] CCM validation response: {response.allowed}")
-
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
-
-        # Ambil data dari Storage Manager
-        data_retrieval_request = f"DataRetrieval for: {query_plan.query}"
-        rows = self.storage_manager.read_block(data_retrieval_request)
-        print(f"[QP] Fetched data from Storage Manager: {rows.data}")
-
-        # Lakukan manipulasi (JOIN, ORDER BY, etc.)
-        processed_data = self._process_query_data(query, rows)
-        print(f"[QP] Data manipulation complete. Final rows: {len(processed_data.data)}")
-        
-        # Kembalikan ExecutionResult
-        message = "Query executed successfully."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=len(processed_data.data),
-            data=processed_data
-        )
-
-    def _process_query_data(self, query: str, rows: Any) -> Rows:
-        # Process query data for ORDER BY, LIMIT, etc. demonstrasi.
-        query_upper = query.upper()
-        result_data = rows.data.copy() if hasattr(rows, 'data') else []
-        
-        # Handle ORDER BY
-        order_by_match = re.search(r'ORDER\s+BY\s+(\w+)(\s+DESC)?', query_upper)
-        if order_by_match and result_data:
-            column = order_by_match.group(1).lower()
-            is_desc = order_by_match.group(2) is not None
+        if condition_node.type == "SELECTION":
+            parts = condition_node.val.split(" ")
+            if len(parts) < 2: return rows
+            attr = parts[0].lower()
+            op = parts[1]
+            val = " ".join(parts[2:]).strip("'") if len(parts) > 2 else ""
             
-            # Sort data jika kolom ada
-            if result_data and column in result_data[0]:
-                result_data = sorted(result_data, key=lambda x: x.get(column, ''), reverse=is_desc)
-                print(f"[QP] Applied ORDER BY {column} {'DESC' if is_desc else 'ASC'}")
-        
-        # Handle LIMIT
-        limit_match = re.search(r'LIMIT\s+(\d+)', query_upper)
-        if limit_match:
-            limit = int(limit_match.group(1))
-            result_data = result_data[:limit]
-            print(f"[QP] Applied LIMIT {limit}")
-        
-        return Rows(data=result_data)
+            is_numeric_col = False
+            if rows_data and attr in rows_data[0]:
+                if isinstance(rows_data[0][attr], (int, float)):
+                    is_numeric_col = True
+                    try: val = float(val) 
+                    except: pass
 
-    def _handle_select(self, query):
-        print("[QP] Handling SELECT/JOIN query...")
-        # Kirim ke Query Optimizer
-        parsed_query = self.optimizer.parse_query(query)
-        
-        # Lanjutkan eksekusi
-        return self._execute_plan(query, parsed_query)
-
-    def _handle_update(self, query):
-        print("[QP] Handling UPDATE query...")
-        parsed_query = self.optimizer.parse_query(query)
-        query_plan = self.optimizer.optimize_query(parsed_query)
-        
-        table_name = self._extract_table_name(query)
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, "write"
-        )
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
+            filtered_rows = []
+            for row in rows_data:
+                if attr not in row: continue
+                row_val = row[attr]
+                try:
+                    if op == "=": 
+                        if str(row_val) == str(val): filtered_rows.append(row)
+                    elif op == "<>": 
+                        if str(row_val) != str(val): filtered_rows.append(row)
+                    elif is_numeric_col:
+                        if op == ">" and row_val > val: filtered_rows.append(row)
+                        elif op == ">=" and row_val >= val: filtered_rows.append(row)
+                        elif op == "<" and row_val < val: filtered_rows.append(row)
+                        elif op == "<=" and row_val <= val: filtered_rows.append(row)
+                except: continue
+            return Rows(data=filtered_rows, rows_count=len(filtered_rows))
             
-        data_write_request = f"DataWrite for: {query_plan.query}"
-        affected_rows = self.storage_manager.write_block(data_write_request)
+        elif condition_node.type == "AND":
+            current = Rows(data=rows_data, rows_count=len(rows_data))
+            for child in condition_node.childs:
+                current = self._apply_condition(current, child)
+            return current
+        return rows
+
+    def _update_table(self, node) -> Rows:
+        from Storage_Manager.utils import DataWrite
+        if not node.childs: raise ValueError("Invalid UPDATE tree")
+        table = node.childs[0].val
+        parts = node.val.split('=')
+        col = [parts[0].strip()] if len(parts) > 1 else []
+        val = parts[1].strip().strip("'") if len(parts) > 1 else ""
         
-        message = f"UPDATE executed. {affected_rows} rows affected."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=affected_rows
-        )
+        conditions = []
+        if len(node.childs) > 1: conditions = self._extract_conditions(node.childs[1])
+        self._validate_ccm(table, "write")
+        
+        dw = DataWrite(table=table, column=col, conditions=conditions, new_value=val)
+        res = self.storage_manager.write_block(dw)
+        cnt = self._get_affected_count(res)
+        return Rows(data=[], rows_count=cnt, message=f"Updated {cnt} rows")
 
-    def _handle_delete(self, query):
-        print("[QP] Handling DELETE query ...")
-        parsed_query = self.optimizer.parse_query(query)
-        query_plan = self.optimizer.optimize_query(parsed_query)
+    def _insert_table(self, node) -> Rows:
+        from Storage_Manager.utils import DataWrite
+        table = node.childs[0].val
+        cols = node.val.get("columns", []) if isinstance(node.val, dict) else []
+        vals = node.val.get("values", []) if isinstance(node.val, dict) else []
+        self._validate_ccm(table, "write")
+        dw = DataWrite(table=table, column=cols, conditions=[], new_value=vals)
+        res = self.storage_manager.write_block(dw)
+        cnt = self._get_affected_count(res)
+        return Rows(data=[], rows_count=cnt, message=f"Inserted {cnt} rows")
 
-        table_name = self._extract_table_name(query)
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, "write"
-        )
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
+    def _delete_table(self, node) -> Rows:
+        from Storage_Manager.utils import DataDeletion
+        table = node.childs[0].val
+        conditions = []
+        if len(node.childs) > 1: conditions = self._extract_conditions(node.childs[1])
+        self._validate_ccm(table, "write")
+        dd = DataDeletion(table=table, conditions=conditions)
+        res = self.storage_manager.delete_block(dd)
+        return Rows(data=[], rows_count=res if isinstance(res, int) else 1, message=f"Deleted rows")
+
+    def _order_by(self, data: Rows, order_by_val) -> Rows:
+        if not data.data: return data
+        
+        col_name = order_by_val
+        reverse = False
+        
+        # Check format jika optimizer mengirim list [col, direction]
+        if isinstance(order_by_val, list):
+            col_name = order_by_val[0]
+            if len(order_by_val) > 1 and str(order_by_val[1]).upper() == "DESC":
+                reverse = True
+        elif isinstance(order_by_val, str) and " DESC" in order_by_val.upper():
+            col_name = order_by_val.split(" ")[0]
+            reverse = True
+
+        # Lakukan sorting in-memory
+        try:
+            sorted_data = sorted(
+                data.data, 
+                key=lambda x: x.get(col_name.lower(), 0), 
+                reverse=reverse
+            )
+            return Rows(data=sorted_data, rows_count=len(sorted_data))
+        except Exception as e:
+            print(f"[QP Warning] Sort failed: {e}")
+            return data
+
+    def _cartesian(self, node) -> Rows:
+        if not node.childs: return Rows()
+        
+        # Ambil semua tabel
+        tables_data = []
+        for child in node.childs:
+            tables_data.append(self._process_node(child).data)
             
-        data_deletion_request = f"DataDeletion for: {query_plan.query}"
-        affected_rows = self.storage_manager.delete_block(data_deletion_request)
+        if not tables_data: return Rows()
         
-        message = f"DELETE executed. {affected_rows} rows affected."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=affected_rows
-        )
-
-    def _handle_insert(self, query):
-        print("[QP] Handling INSERT query...")
-        parsed_query = self.optimizer.parse_query(query)
-        query_plan = self.optimizer.optimize_query(parsed_query)
+        result = tables_data[0]
         
-        table_name = self._extract_table_name(query)
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, "write"
-        )
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
+        # Iteratif cross join
+        for i in range(1, len(tables_data)):
+            next_table = tables_data[i]
+            temp_res = []
+            for r1 in result:
+                for r2 in next_table:
+                    temp_res.append({**r1, **r2}) 
+            result = temp_res
             
-        data_write_request = f"DataWrite for: {query_plan.query}"
-        affected_rows = self.storage_manager.write_block(data_write_request)
-        
-        message = f"INSERT executed. {affected_rows} rows affected."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=affected_rows
-        )
+        return Rows(data=result, rows_count=len(result))
 
-    def _handle_create_table(self, query):
-        print("[QP] Handling CREATE TABLE query...")
-        parsed_query = self.optimizer.parse_query(query)
-        query_plan = self.optimizer.optimize_query(parsed_query)
-        
-        table_name = self._extract_table_name(query)
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, "write"
-        )
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
-        
-        # DDL memanggil metode di Storage Manager
-        # untuk mock, gunakan write_block
-        data_write_request = f"DDL_CREATE for: {query_plan.query}"
-        affected_rows = self.storage_manager.write_block(data_write_request) # Asumsi 0
-        
-        message = "CREATE TABLE executed."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=affected_rows
-        )
+    def _limit(self, data: Rows, limit_value: int) -> Rows:
+        if not data.data: return data
+        return Rows(data=data.data[:limit_value], rows_count=len(data.data[:limit_value]))
 
-    def _handle_drop_table(self, query):
-        print("[QP] Handling DROP TABLE query...")
-        parsed_query = self.optimizer.parse_query(query)
-        query_plan = self.optimizer.optimize_query(parsed_query)
+    def _nested_loop_join(self, left: Rows, right: Rows, cond) -> Rows:
+        joined = []
+        if not left.data or not right.data: return Rows()
         
-        table_name = self._extract_table_name(query)
-        response = self.cc_manager.validate_object(
-            table_name, self.current_transaction_id, "write"
-        )
-        if not response.allowed:
-            raise Exception("Transaction aborted by Concurrency Control Manager.")
-            
-        data_deletion_request = f"DDL_DROP for: {query_plan.query}"
-        affected_rows = self.storage_manager.delete_block(data_deletion_request) # Asumsi 0
+        l_key = cond[0].split(".")[-1]
+        r_key = cond[1].split(".")[-1]
         
-        message = "DROP TABLE executed."
-        return ExecutionResult(
-            transaction_id=self.current_transaction_id,
-            query=query,
-            timestamp=datetime.now(),
-            message=message,
-            rows_count=affected_rows
-        )
+        for l in left.data:
+            for r in right.data:
+                if str(l.get(l_key)) == str(r.get(r_key)):
+                    joined.append({**l, **r})
+        return Rows(data=joined, rows_count=len(joined))
+
+    def _create_table(self, node) -> Rows:
+        table_name = node.val
+        from Storage_Manager.utils import DataWrite
+        self._validate_ccm("SCHEMA", "write")
+
+        dw = DataWrite(table="SCHEMA", column=["create"], conditions=[], new_value=f"CREATE TABLE {table_name}")
+        self.storage_manager.write_block(dw)
+        
+        return Rows(data=[], rows_count=0, message=f"Table {table_name} created")
+
+    def _drop_table(self, node) -> Rows:
+        table_name = node.val
+        self._validate_ccm(table_name, "write")
+        
+        from Storage_Manager.utils import DataDeletion
+        dd = DataDeletion(table=table_name, conditions=[])
+        self.storage_manager.delete_block(dd)
+        
+        return Rows(data=[], rows_count=0, message=f"Table {table_name} dropped")
+    
+    def _validate_ccm(self, table, action):
+        response = self.cc_manager.validate_object(table, self.current_transaction_id, action)
+        count = 0
+        while count < 5 and not getattr(response, 'allowed', False):
+            time.sleep(0.1)
+            response = self.cc_manager.validate_object(table, self.current_transaction_id, action)
+            count += 1
+        
+        if not getattr(response, 'allowed', False):
+            raise Exception(f"CCM denied {action} access on {table}")
+
+    def _get_affected_count(self, result):
+        if isinstance(result, int): return result
+        if hasattr(result, 'rows_count'): return result.rows_count
+        return 1
+
+    def _extract_conditions(self, node):
+        from Storage_Manager.utils import Condition
+        conditions = []
+        if hasattr(node, 'type'):
+            if node.type == "SELECTION":
+                parts = node.val.split(" ")
+                if len(parts) >= 3:
+                    col = parts[0].lower()
+                    op = parts[1]
+                    val = parts[2].strip("'")
+                    try:
+                        val = float(val)
+                        if val.is_integer(): val = int(val)
+                    except: pass
+                    conditions.append(Condition(column=col, operation=op, operand=val))
+            elif node.type in ["AND", "OR"]:
+                for child in node.childs:
+                    conditions.extend(self._extract_conditions(child))
+        return conditions
+
+    def _commit(self):
+        if self.current_transaction_id is not None:
+            self.cc_manager.commit_transaction(self.current_transaction_id)
+            self.current_transaction_id = None
+            self.multiple_transaction = False
+
+    def _rollback(self):
+        if self.current_transaction_id is not None:
+            self.cc_manager.abort_transaction(self.current_transaction_id, "Error")
+            self.current_transaction_id = None
+            self.multiple_transaction = False
