@@ -69,9 +69,9 @@ class EndTransactionManager:
             
             if self.verbose:
                 print(f"\n{'='*60}")
-                print(f"[EndTxManager] Memulai end transaction untuk TX {transaction_id}")
-                print(f"[EndTxManager] Mode: {'COMMIT' if is_commit else 'ABORT'}")
-                print(f"[EndTxManager] Status saat ini: {tx.status.value}")
+                print(f"Mulai end transaction untuk TX {transaction_id}")
+                print(f"Mode: {'COMMIT' if is_commit else 'ABORT'}")
+                print(f"Status saat ini: {tx.status.value}")
                 print(f"{'='*60}")
             
             # validasi final
@@ -83,7 +83,7 @@ class EndTransactionManager:
                         validation_errors.extend(strategy_errors)
                         result = EndTransactionResult.VALIDATION_FAILED
                         if self.verbose:
-                            print(f"[EndTxManager] [FAIL] Validasi strategi GAGAL:")
+                            print(f"[FAIL] Validasi strategi GAGAL:")
                             for error in strategy_errors:
                                 print(f"  - {error}")
                         # gagal, paksa abort
@@ -95,7 +95,7 @@ class EndTransactionManager:
                         validation_errors.extend(validation_result['errors'])
                         result = EndTransactionResult.VALIDATION_FAILED
                         if self.verbose:
-                            print(f"[EndTxManager] [FAIL] Validasi akhir GAGAL:")
+                            print(f"[FAIL] Validasi akhir GAGAL:")
                             for error in validation_result['errors']:
                                 print(f"  - {error}")
                         # gagal, paksa abort
@@ -104,48 +104,43 @@ class EndTransactionManager:
             # get daftar resources yang perlu di cleanup
             accessed_objects = tx.get_accessed_objects()
             if self.verbose:
-                print(f"\n[EndTxManager] Resources yang diakses TX {transaction_id}:")
+                print(f"\nResources yang diakses TX {transaction_id}:")
                 print(f"\n\nRead Set: {tx.read_set}")
                 print(f"\n\nWrite Set: {tx.write_set}")
-            
-            # release locks/resources melalui strategy
-            if self.verbose:
-                print(f"\n[EndTxManager] Melepaskan locks/resources...")
-            
-            # bisa dihapus kalau gk butuh logging
+                
             locks_released = self._release_resources_list(transaction_id, accessed_objects)
             
-            if self.verbose:
-                print(f"[EndTxManager] Locks successfully released: {locks_released}")
-            
-            # cleanup di strategy
-            self.strategy.end_transaction(transaction_id)
-            resources_cleaned.append(f"Strategy cleanup for TX {transaction_id}")
-            
-            # update status transaksi
             if is_commit and result == EndTransactionResult.SUCCESS:
                 if self.verbose:
-                    print(f"\n[EndTxManager] Melakukan COMMIT...")
-                # self.tx_manager.mark_partially_committed(transaction_id)
+                    print(f"\nMelakukan COMMIT...")
+                
+                # commit transaction status
                 self.tx_manager.commit_transaction(transaction_id)
-
-                # Mark as committed in strategy (for OCC)
+                resources_cleaned.append(f"Transaction {transaction_id} committed")
+                
+                # mark as committed
                 if hasattr(self.strategy, 'commit_validation'):
                     self.strategy.commit_validation(transaction_id)
-
-                # Clean up undo logs after successful commit
+                
+                # clean up undo logs
                 self.undo_log_manager.commit_transaction(transaction_id)
-                resources_cleaned.append(f"Transaction {transaction_id} committed")
                 resources_cleaned.append(f"Undo logs cleared for TX {transaction_id}")
+                
             else:
                 if self.verbose:
-                    print(f"\n[EndTxManager] Melakukan ABORT...")
-
-                # Rollback changes using undo log
+                    print(f"\nMelakukan ABORT...")
+                
+                # rollback changes using undo log
                 if self.undo_log_manager.has_logs(transaction_id):
                     rolled_back = self.undo_log_manager.abort_transaction(transaction_id)
                     resources_cleaned.append(f"Rolled back {len(rolled_back)} operations for TX {transaction_id}")
-
+                
+                # strategy specific abort cleanup
+                if hasattr(self.strategy, 'abort_transaction'):
+                    self.strategy.abort_transaction(transaction_id)
+                    resources_cleaned.append(f"Strategy abort cleanup for TX {transaction_id}")
+                
+                # Mark as failed and aborted
                 self.tx_manager.fail_transaction(
                     transaction_id,
                     "Validation failed" if validation_errors else "User requested abort"
@@ -153,20 +148,51 @@ class EndTransactionManager:
                 self.tx_manager.abort_transaction(transaction_id)
                 resources_cleaned.append(f"Transaction {transaction_id} aborted")
             
+            # release the locks
+            
+            if self.verbose:
+                print(f"\nMelepaskan locks/resources...")
+                
+            self.strategy.end_transaction(transaction_id)
+            resources_cleaned.append(f"Strategy cleanup (locks released) for TX {transaction_id}")
+                
             # terminate the transaction
             self.tx_manager.terminate_transaction(transaction_id)
             resources_cleaned.append(f"Transaction {transaction_id} terminated")
             
             if self.verbose:
-                print(f"\n[EndTxManager] TX {transaction_id} berhasil diakhiri")
+                print(f"Locks/resources released: {locks_released}")
+                print(f"\nTX {transaction_id} berhasil diakhiri")
                 print(f"{'='*60}\n")
             
         except Exception as e:
             result = EndTransactionResult.RESOURCE_CLEANUP_FAILED
             validation_errors.append(f"Error: {str(e)}")
+            
             if self.verbose:
-                print(f"\n[EndTxManager] [FAIL] Error saat end transaction: {e}")
-                print(f"{'='*60}\n")
+                print(f"\nCRITICAL ERROR: {e}")
+                print(f"Performing emergency cleanup...")
+            
+            try:
+                self.strategy.end_transaction(transaction_id)
+                if self.verbose:
+                    print(f"Emergency: locks released")
+            except Exception as cleanup_error:
+                if self.verbose:
+                    print(f"Emergency lock release failed: {cleanup_error}")
+            
+            try:
+                self.tx_manager.terminate_transaction(transaction_id)
+                if self.verbose:
+                    print(f"Emergency: transaction terminated")
+            except Exception as term_error:
+                if self.verbose:
+                    print(f"Emergency termination failed: {term_error}")
+            
+            if self.verbose:
+                print(f"Emergency cleanup completed")
+            
+            raise
         
         # Hitung execution time
         end_time = datetime.now()
