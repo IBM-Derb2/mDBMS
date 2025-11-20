@@ -1,15 +1,15 @@
 from typing import Any
 import threading
-from lib.strategy_interface import ConcurrencyStrategy, Response
-from lib.lock_based_strategy import LockBasedStrategy
-from lib.timestamp_based_strategy import TimestampBasedStrategy
-from lib.validation_based_strategy import ValidationBasedStrategy
-from lib.multi_version_strategy import MultiVersionStrategy
-from lib.transaction_model import TransactionManager
-from lib.transaction_coordinator import TransactionCoordinator
-from lib.deadlock_detector import DeadlockDetector
-from lib.transaction_id_generator import TransactionIdGenerator
-from lib.undo_log import UndoLogManager
+from .lib.strategy_interface import ConcurrencyStrategy, Response
+from .lib.lock_based_strategy import LockBasedStrategy
+from .lib.timestamp_based_strategy import TimestampBasedStrategy
+from .lib.validation_based_strategy import ValidationBasedStrategy
+from .lib.multi_version_strategy import MultiVersionStrategy
+from .lib.transaction_model import TransactionManager
+from .lib.transaction_coordinator import TransactionCoordinator
+from .lib.deadlock_detector import DeadlockDetector
+from .lib.transaction_id_generator import TransactionIdGenerator
+from .lib.undo_log import UndoLogManager
 
 
 class ConcurrencyControlManager:
@@ -40,7 +40,7 @@ class ConcurrencyControlManager:
 
         # Connect deadlock detector to coordinator
         self.coordinator.set_deadlock_detector(self.deadlock_detector)
-
+        self.frm = None
         self._initialized = True
         print(
             f"[CCM] Manajer diinisialisasi (Singleton), strategi aktif: {self.strategy.__class__.__name__}"
@@ -51,11 +51,17 @@ class ConcurrencyControlManager:
         print(
             f"[CCM] Deadlock Prevention: {getattr(self.strategy, 'deadlock_prevention_scheme', 'N/A')}"
         )
+    
+    def set_failure_recovery_manager(self, frm):
+        # self.frm = frm
+        print(f"[CCM] Failure Recovery Manager connected")
 
     def begin_transaction(self) -> int:
         print("[CCM] Beginning new transaction...")
         tid = self.id_generator.generate()
         self.tx_manager.create_transaction(tid)
+        # if self.frm:
+        #     self.frm.log_start(tid)
         return tid
 
     def log_object(self, obj: Any, transaction_id: int, action: str):
@@ -78,6 +84,8 @@ class ConcurrencyControlManager:
         print(f"[CCM] Committing TX {transaction_id}...")
         try:
             self.coordinator.commit(transaction_id)
+            # if self.frm:
+            #     self.frm.log_commit(transaction_id)
             print(f"[CCM] [OK] TX {transaction_id} berhasil di-commit dan terminated")
         except Exception as e:
             print(f"[CCM] [ERROR] Error saat commit TX {transaction_id}: {e}")
@@ -87,6 +95,8 @@ class ConcurrencyControlManager:
         print(f"[CCM] Aborting TX {transaction_id} (Reason: {reason})...")
         try:
             self.coordinator.abort(transaction_id, reason)
+            # if self.frm:
+            #     self.frm.log_abort(transaction_id)
             print(f"[CCM] [ABORTED] TX {transaction_id} berhasil di-abort dan terminated")
         except Exception as e:
             print(f"[CCM] Error saat abort TX {transaction_id}: {e}")
