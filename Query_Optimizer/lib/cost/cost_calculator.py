@@ -59,15 +59,16 @@ def get_operation_cost(node: QueryTree) -> int:
     if node.type in ['COLUMNS', 'FROM', 'WHERE', 'SET', 'VALUES', 'COLUMN_DEFS']:
         return 0
 
-    # Table access cost
+    # Table access cost (base cost for table scan)
     elif node.type == 'TABLE':
-        return 50  # Placeholder Value
+        # Base cost for accessing a table (statistics-based calc will override)
+        return 100
 
-    # Column reference cost
+    # Column reference cost (very cheap - just a reference)
     elif node.type == 'COLUMN':
         return 1
 
-    # Literal value cost
+    # Literal value cost (free - just a value)
     elif node.type == 'LITERAL':
         return 0
 
@@ -75,22 +76,23 @@ def get_operation_cost(node: QueryTree) -> int:
     elif node.type == 'OPERATOR':
         return _get_operator_cost(node.val)
 
-    # Join operation costs
+    # Join operation costs (expensive operations)
     elif node.type == 'JOIN':
+        # Natural joins may need to match on multiple columns
         if node.val == 'NATURAL':
-            return 500  # Placeholder Value
+            return 1000  # Natural join needs column matching
         else:
-            return 300  # Placeholder Value
+            return 500  # Explicit join condition (hash join base cost)
 
     # DML operation costs
     elif node.type == 'SELECT':
-        return 50
+        return 50  # Base cost for SELECT operation
     elif node.type == 'INSERT':
-        return 100
+        return 200  # INSERT needs to update indices and maintain constraints
     elif node.type == 'UPDATE':
-        return 150
+        return 300  # UPDATE needs to read, modify, and write + update indices
     elif node.type == 'DELETE':
-        return 150
+        return 250  # DELETE needs to update indices and cascade
 
     # Default cost for unknown types
     else:
@@ -101,24 +103,59 @@ def _get_operator_cost(operator: str) -> int:
     """
     Get the cost for a specific operator.
 
+    Costs reflect relative computational complexity:
+    - Logical operators: cheap (just boolean operations)
+    - Comparisons: cheap (single comparison)
+    - Arithmetic: cheap to moderate (depending on operation)
+    - String operations: more expensive
+    - Special operators: varies by complexity
+
     Args:
         operator: The operator string (e.g., 'AND', '=', '+', etc.)
 
     Returns:
-        Cost of the operator
+        Cost of the operator (relative units)
     """
-    # Logical operators
-    if operator in ['AND', 'OR']:
-        return 50  # Placeholder Value
+    # Logical operators (cheap - just boolean logic)
+    if operator in ['AND', 'OR', 'NOT']:
+        return 2
 
-    # Comparison operators
-    elif operator in ['=', '!=', '<', '<=', '>', '>=', '<>']:
-        return 50  # Placeholder Value
+    # Equality comparisons (very cheap - single comparison)
+    elif operator in ['=', '!=', '<>']:
+        return 3
 
-    # Arithmetic operators
-    elif operator in ['+', '-', '*', '/', '%']:
+    # Range comparisons (cheap - single comparison)
+    elif operator in ['<', '<=', '>', '>=']:
+        return 3
+
+    # Simple arithmetic (cheap)
+    elif operator in ['+', '-']:
+        return 5
+
+    # Multiplication (moderate)
+    elif operator == '*':
+        return 10
+
+    # Division/modulo (more expensive)
+    elif operator in ['/', '%']:
+        return 15
+
+    # String operations (expensive - character by character)
+    elif operator in ['LIKE', 'ILIKE', '~', '~*']:
+        return 100
+
+    # Set operations (moderate - involves multiple comparisons)
+    elif operator in ['IN', 'NOT IN']:
         return 50
 
-    # Special operators (IN, BETWEEN, LIKE, etc.)
+    # Range operations (moderate)
+    elif operator in ['BETWEEN', 'NOT BETWEEN']:
+        return 30
+
+    # NULL checks (cheap)
+    elif operator in ['IS NULL', 'IS NOT NULL']:
+        return 2
+
+    # Default for unknown operators
     else:
-        return 50  # Placeholder Value
+        return 10

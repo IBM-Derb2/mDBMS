@@ -141,7 +141,11 @@ def _calculate_join_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
     - Probe with larger table: O(right_rows)
     - Total: O(left_rows + right_rows + result_rows)
 
-    This is MUCH more efficient than Cartesian product: O(left_rows * right_rows)
+    Join cardinality estimation formulas:
+    - If R ∩ S = {A} is a key for R: size = n_s (each S tuple matches at most one R tuple)
+    - If R ∩ S = {A} is a key for S: size = n_r (each R tuple matches at most one S tuple)
+    - If R ∩ S = {A} is not a key for either: size = (n_r * n_s) / max(V(A,r), V(A,s))
+    - If no common attributes (Cartesian product): size = n_r * n_s
     """
     # Get left and right table statistics
     left_cost, left_rows = 0, 1000
@@ -151,10 +155,32 @@ def _calculate_join_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
         left_cost, left_rows = calculate_node_cost_with_stats(node.childs[0])
         right_cost, right_rows = calculate_node_cost_with_stats(node.childs[1])
 
-    # For equi-join (equality condition), assume foreign key relationship
-    # Result size is typically equal to the larger table (each row matches once)
-    # For foreign key: orders.user_id → users.id means each order has one user
-    result_rows = max(left_rows, right_rows)  # Assuming FK constraint
+    # Estimate join result size based on join type
+    # For natural joins or equi-joins, use more accurate formulas
+    if node.val == 'NATURAL' or _has_join_condition(node):
+        # Try to detect if join attribute is a key
+        # Heuristic: if one table is much smaller and has close to unique values,
+        # it's likely a key (e.g., users.id in orders JOIN users)
+
+        # If smaller table has rows ≈ distinct values on join column, it's likely a key
+        # In that case, result size ≈ larger table size
+        # Left is much smaller (likely dimension table)
+        if left_rows < right_rows * 0.1:
+            result_rows = right_rows  # Each right row matches one left row
+        elif right_rows < left_rows * 0.1:  # Right is much smaller
+            result_rows = left_rows  # Each left row matches one right row
+        else:
+            # Both tables similar size - use formula for non-key joins
+            # size = (n_r * n_s) / max(V(A,r), V(A,s))
+            # Without V(A,r), use heuristic: assume V(A,r) ≈ min(n_r, n_s)
+            # This gives: result ≈ max(n_r, n_s)
+            result_rows = max(left_rows, right_rows)
+
+            # Apply selectivity factor for potential filtering in join condition
+            result_rows = int(result_rows * 0.8)  # Assume 80% match
+    else:
+        # No explicit join condition - Cartesian product (very expensive!)
+        result_rows = left_rows * right_rows
 
     # Hash join cost model:
     # 1. Build hash table on smaller relation: smaller_rows * 5
@@ -173,9 +199,20 @@ def _calculate_join_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
     return total_cost, result_rows
 
 
+def _has_join_condition(node: QueryTree) -> bool:
+    """Check if join has an explicit join condition"""
+    # Check if join node has ON or USING clause in its children
+    return len(node.childs) >= 3  # Left, Right, and Condition
+
+
 def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]:
     """
-    Estimate selectivity of WHERE clause
+    Estimate selectivity of WHERE clause using database theory formulas
+
+    Formulas:
+    - Conjunction (AND): s1 * s2 * ... * sn (multiply selectivities)
+    - Disjunction (OR): 1 - (1-s1) * (1-s2) * ... * (1-sn)
+    - Negation (NOT): 1 - selectivity
 
     Returns:
         tuple(cost, selectivity): Cost to evaluate WHERE and selectivity factor
@@ -187,46 +224,96 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
     if not condition:
         return 0, 1.0
 
-    # For AND conditions, multiply selectivities (more selective)
+    # For AND conditions, use conjunction formula: multiply selectivities
     if condition.type == 'OPERATOR' and condition.val == 'AND':
         total_cost = 0
-        total_selectivity = 1.0
+        selectivities = []
         for child in condition.childs:
             cost, sel = _estimate_condition_selectivity(child, stats_mgr)
             total_cost += cost
-            total_selectivity *= sel  # AND conditions multiply
+            selectivities.append(sel)
+
+        # Use proper conjunction formula
+        total_selectivity = stats_mgr.estimate_conjunction_selectivity(
+            selectivities)
         return total_cost, total_selectivity
 
-    # For OR conditions, add selectivities (less selective)
+    # For OR conditions, use disjunction formula: 1 - (1-s1)*(1-s2)*...*(1-sn)
     elif condition.type == 'OPERATOR' and condition.val == 'OR':
         total_cost = 0
-        total_selectivity = 0.0
+        selectivities = []
         for child in condition.childs:
             cost, sel = _estimate_condition_selectivity(child, stats_mgr)
             total_cost += cost
-            total_selectivity += sel  # OR conditions add
-        return total_cost, min(total_selectivity, 1.0)
+            selectivities.append(sel)
+
+        # Use proper disjunction formula
+        total_selectivity = stats_mgr.estimate_disjunction_selectivity(
+            selectivities)
+        return total_cost, total_selectivity
+
+    # For NOT conditions, use negation formula
+    elif condition.type == 'OPERATOR' and condition.val == 'NOT':
+        if condition.childs:
+            cost, sel = _estimate_condition_selectivity(
+                condition.childs[0], stats_mgr)
+            # Use negation formula: 1 - selectivity
+            negated_selectivity = stats_mgr.estimate_negation_selectivity(sel)
+            return cost, negated_selectivity
+        return 0, 1.0
 
     else:
         return _estimate_condition_selectivity(condition, stats_mgr)
 
 
 def _estimate_condition_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]:
-    """Estimate selectivity of a single condition"""
+    """Estimate selectivity of a single condition using database theory"""
     if node.type == 'OPERATOR' and node.val in ['=', '!=', '<', '<=', '>', '>=']:
         # Simple comparison condition
-        # Try to extract table and column info
-        selectivity = 0.1  # Default 10% selectivity
         cost = 100  # Cost to evaluate condition
 
-        # More sophisticated: check if we can identify the column
-        # For now, use heuristics based on operator
+        # Try to extract column and value from condition
+        table_name = None
+        column_name = None
+        value = None
+
+        # Try to find COLUMN node and LITERAL node
+        for child in node.childs:
+            if child.type == 'COLUMN':
+                column_name = child.val
+                # Try to infer table name from column's children or context
+                if child.childs and child.childs[0].type == 'TABLE':
+                    table_name = child.childs[0].val
+            elif child.type == 'LITERAL':
+                value = child.val
+
+        # If we found column info, use statistics-based estimation
+        if column_name:
+            # Try common table names if table not specified
+            if not table_name:
+                for table in ['users', 'orders', 'products', 'categories']:
+                    if stats_mgr.get_table_stats(table):
+                        table_stats = stats_mgr.get_table_stats(table)
+                        if column_name in table_stats.column_stats:
+                            table_name = table
+                            break
+
+            if table_name:
+                selectivity = stats_mgr.estimate_selectivity(
+                    table_name, column_name, node.val, value
+                )
+                return cost, selectivity
+
+        # Fall back to heuristics if we can't use statistics
         if node.val == '=':
-            selectivity = 0.1  # Equality is selective
+            # Equality is selective (assume ~10 distinct values)
+            selectivity = 0.1
         elif node.val in ['<', '>', '<=', '>=']:
             selectivity = 0.33  # Range queries less selective
         elif node.val == '!=':
             selectivity = 0.9  # Not equal is not selective
+        else:
+            selectivity = 0.5
 
         return cost, selectivity
 

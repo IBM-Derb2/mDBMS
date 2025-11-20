@@ -26,7 +26,7 @@ class TableStatistics:
         self.column_stats = {}
 
     def add_column_stats(self, column: str, distinct_values: int, null_count: int = 0,
-                         min_value=None, max_value=None, avg_value=None):
+                         min_value=None, max_value=None, avg_value=None, histogram=None):
         """Add statistics for a specific column"""
         self.column_stats[column] = {
             'distinct_values': distinct_values,
@@ -34,7 +34,8 @@ class TableStatistics:
             'selectivity': distinct_values / self.row_count if self.row_count > 0 else 1.0,
             'min': min_value,
             'max': max_value,
-            'avg': avg_value
+            'avg': avg_value,
+            'histogram': histogram  # For refined selectivity estimates
         }
 
     def __str__(self):
@@ -177,11 +178,18 @@ class StatisticsManager:
         stats = self.get_table_stats(table_name)
         return stats.row_count if stats else 1000  # Default if not found
 
-    def estimate_selectivity(self, table_name: str, column: str, operator: str) -> float:
+    def estimate_selectivity(self, table_name: str, column: str, operator: str, value=None) -> float:
         """
-        Estimate selectivity of a condition
+        Estimate selectivity of a condition using database theory formulas
 
         Selectivity = fraction of rows that satisfy the condition (0.0 to 1.0)
+
+        Formulas from Database System Concepts:
+        - σ_A=v(r): n_r / V(A,r) where V(A,r) is number of distinct values
+        - σ_A≤v(r): 0 if v < min(A,r), else (v - min(A,r)) / (max(A,r) - min(A,r))
+        - Conjunction (AND): multiply selectivities
+        - Disjunction (OR): 1 - (1-s1)*(1-s2)*...*(1-sn)
+        - Negation (NOT): 1 - selectivity
         """
         stats = self.get_table_stats(table_name)
         if not stats or column not in stats.column_stats:
@@ -194,18 +202,93 @@ class StatisticsManager:
                 return 0.5  # 50% for unknown
 
         col_stats = stats.column_stats[column]
+        n_r = stats.row_count
+        V_A_r = col_stats['distinct_values']
 
         # Selectivity based on operator and column stats
         if operator == '=':
-            # For equality, selectivity = 1 / distinct_values
-            return 1.0 / col_stats['distinct_values']
+            # σ_A=v(r): Equality condition on a key attribute = 1
+            # For non-key: selectivity = n_r / V(A,r) = 1 / V(A,r) (normalized)
+            if V_A_r == n_r:  # Unique column (key)
+                return 1.0 / n_r
+            else:
+                return 1.0 / V_A_r
+
         elif operator == '!=':
-            return 1.0 - (1.0 / col_stats['distinct_values'])
+            # Negation: 1 - selectivity of equality
+            eq_selectivity = 1.0 / V_A_r
+            return 1.0 - eq_selectivity
+
         elif operator in ['<', '<=', '>', '>=']:
-            # For range queries, estimate 33% selectivity
+            # σ_A≤v(r): Range condition
+            # If min/max available, use formula: (v - min(A,r)) / (max(A,r) - min(A,r))
+            if col_stats['min'] is not None and col_stats['max'] is not None and value is not None:
+                min_val = col_stats['min']
+                max_val = col_stats['max']
+
+                try:
+                    # Convert to numeric for comparison
+                    min_val = float(min_val) if not isinstance(
+                        min_val, (int, float)) else min_val
+                    max_val = float(max_val) if not isinstance(
+                        max_val, (int, float)) else max_val
+                    val = float(value) if not isinstance(
+                        value, (int, float)) else value
+
+                    if max_val == min_val:
+                        return 0.5  # All values are the same
+
+                    if operator in ['<', '<=']:
+                        if val < min_val:
+                            return 0.0
+                        elif val > max_val:
+                            return 1.0
+                        else:
+                            selectivity = (val - min_val) / (max_val - min_val)
+                            return min(1.0, max(0.0, selectivity))
+                    else:  # '>' or '>='
+                        if val > max_val:
+                            return 0.0
+                        elif val < min_val:
+                            return 1.0
+                        else:
+                            selectivity = (max_val - val) / (max_val - min_val)
+                            return min(1.0, max(0.0, selectivity))
+                except (ValueError, TypeError):
+                    # Fall back to default if conversion fails
+                    pass
+
+            # Default for range queries without min/max info
             return 0.33
         else:
             return col_stats['selectivity']
+
+    def estimate_conjunction_selectivity(self, selectivities: list) -> float:
+        """
+        Estimate selectivity for conjunction (AND) of conditions
+        Formula: s1 * s2 * ... * sn (assuming independence)
+        """
+        result = 1.0
+        for s in selectivities:
+            result *= s
+        return result
+
+    def estimate_disjunction_selectivity(self, selectivities: list) -> float:
+        """
+        Estimate selectivity for disjunction (OR) of conditions
+        Formula: 1 - (1-s1) * (1-s2) * ... * (1-sn)
+        """
+        result = 1.0
+        for s in selectivities:
+            result *= (1.0 - s)
+        return 1.0 - result
+
+    def estimate_negation_selectivity(self, selectivity: float) -> float:
+        """
+        Estimate selectivity for negation (NOT) of condition
+        Formula: 1 - selectivity
+        """
+        return 1.0 - selectivity
 
     def print_all_statistics(self):
         """Print all database statistics"""

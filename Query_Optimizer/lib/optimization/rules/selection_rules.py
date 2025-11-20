@@ -1,11 +1,25 @@
-"""
-Selection Optimization Rules
+"""Selection Optimization Rules
 
-Implements equivalence rules for selection operations:
+Implements equivalence rules and heuristic optimizations for selection operations:
+
+Equivalence Rules:
 1. Conjunctive selection decomposition: σθ1∧θ2(E) = σθ1(σθ2(E))
 2. Selection commutativity: σθ1(σθ2(E)) = σθ2(σθ1(E))
 3. Selection-Cartesian product combination: σθ(E1×E2) = E1 ⋈θ E2
 4. Selection-theta join combination: σθ(E1 ⋈φ E2) = E1 ⋈θ∧φ E2
+
+Heuristic Optimization Rules(from Database System Concepts):
+1. Perform selection early(reduces number of tuples)
+2. Perform projection early(reduces number of attributes)
+3. Perform most restrictive selection and join operations before other similar operations
+   (reduces intermediate result sizes)
+4. Some systems use only heuristics, others combine heuristics with partial cost-based optimization
+
+Key Benefits:
+- Reduces number of tuples early in query processing
+- Converts expensive Cartesian products to efficient joins
+- Minimizes intermediate result sizes
+- Enables better use of indices on filtered columns
 """
 
 from typing import Optional
@@ -25,7 +39,7 @@ class SelectionRule(OptimizationRule):
         Check if selection optimization can be applied
 
         Looks for:
-        - Conjunctive selections (AND conditions)
+        - Conjunctive selections(AND conditions)
         - Multiple consecutive selections
         - Selections over Cartesian products
         - Selections over joins
@@ -54,25 +68,44 @@ class SelectionRule(OptimizationRule):
 
     def apply(self, tree: QueryTree) -> QueryTree:
         """
-        Apply selection optimizations
+        Apply selection optimizations using heuristic rules
 
-        Priority order:
-        1. Combine selection with Cartesian product → theta join
-        2. Decompose conjunctive selections
-        3. Reorder cascaded selections (for commutativity)
+        Optimization Strategy(based on Database System Concepts Ch. 13):
+        1. Combine selection with Cartesian product → theta join(MOST IMPORTANT)
+           - Converts O(n*m) Cartesian product to O(n+m) hash join
+           - Dramatic cost reduction for multi-table queries
+
+        2. Decompose conjunctive selections(AND conditions)
+           - Enables pushing down individual conditions separately
+           - Allows more granular optimization
+
+        3. Reorder cascaded selections by selectivity
+           - Most selective(restrictive) conditions first
+           - Reduces tuples early, minimizing processing cost
+
+        This implements the "perform selection early" and "most restrictive first"
+        heuristics from the lecture slides.
         """
-        self._log('info', f"Applying selection optimization")
+        self._log('info', f"Applying selection optimization with heuristic rules")
 
-        # Rule 4 & 5: Combine with joins/products first (most beneficial)
+        # Rule 1: Combine with joins/products first (HIGHEST PRIORITY)
+        # This is the most beneficial optimization - converts Cartesian product to join
         if self._has_selection_over_join_or_product(tree):
+            self._log(
+                'info', "➡️ Heuristic: Converting Cartesian product + WHERE to theta join")
             tree = self._combine_selection_with_join(tree)
 
-        # Rule 1: Decompose conjunctive selections
+        # Rule 2: Decompose conjunctive selections
+        # Enables independent optimization of each condition
         if self._has_conjunctive_condition(tree):
+            self._log(
+                'info', "➡️ Heuristic: Decomposing AND conditions for early selection")
             tree = self._decompose_conjunctive_selection(tree)
 
-        # Rule 2: Apply commutativity if beneficial (cost-based)
+        # Rule 3: Apply commutativity if beneficial (most restrictive first)
         if self._has_cascaded_selections(tree):
+            self._log(
+                'info', "➡️ Heuristic: Reordering selections by selectivity (most restrictive first)")
             tree = self._optimize_selection_order(tree)
 
         return tree
@@ -213,7 +246,7 @@ class SelectionRule(OptimizationRule):
         """
         Reorder cascaded selections based on selectivity
 
-        More selective conditions should be applied first (bottom of tree)
+        More selective conditions should be applied first(bottom of tree)
         """
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, ConditionAnalyzer, CostEstimator
 
