@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any
 import struct
 import re
 
@@ -237,3 +237,47 @@ class Serializer:
         operation = ' '.join(map(str, value))
         
         return operation
+    
+    def get_row_size(self, columns: List[dict]) -> int:
+        size = 0
+        for col in columns:
+            if col["type"] == "int":
+                size += 4
+            elif col["type"] == "float":
+                size += 8
+            elif col["type"] in ["varchar", "char"]:
+                size += col["length"] + 1 # Marker (1 byte) + Fixed Length Padding
+        return size
+    
+    def deserialize_single_row(self, row_data: bytes, columns: List[dict]) -> dict:
+        row = {}
+        offset = 0
+        
+        for col in columns:
+            col_name = col["name"]
+            col_type = col["type"]
+            
+            if col_type == "int":
+                row[col_name] = int.from_bytes(row_data[offset:offset+4], byteorder='big')
+                offset += 4
+            elif col_type == "float":
+                row[col_name] = struct.unpack('d', row_data[offset:offset+8])[0]
+                offset += 8
+            elif col_type in ["varchar", "char"]:
+                length = col["length"]
+                marker = row_data[offset]         
+                raw_str = row_data[offset+1 : offset+1+length]
+        
+                if marker == 1: # varchar
+                    row[col_name] = raw_str.decode('utf-8').rstrip('\x00')
+                elif marker == 2: # char
+                    chars = []
+                    for b in raw_str:
+                        if b != 0: chars.append(chr(b))
+                        else: chars.append(' ')
+                    row[col_name] = "".join(chars).strip()
+                else:
+                    row[col_name] = None
+
+                offset += 1 + length # 1 byte marker + length bytes data
+        return row

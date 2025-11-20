@@ -7,7 +7,7 @@ from serializer import Serializer
 class TestStorageEngine(unittest.TestCase):
     def setUp(self):
         self.serializer = Serializer()
-        self.storage = StorageEngine(data_dir="dummy_data", serializer=self.serializer)
+        self.storage = StorageEngine(serializer=self.serializer)
 
     def test_read_block(self):
         dr = DataRetrieval(

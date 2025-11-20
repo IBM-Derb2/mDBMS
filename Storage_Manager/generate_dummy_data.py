@@ -2,7 +2,7 @@ from serializer import Serializer
 from storage_engine import StorageEngine
 import random
 
-storage_engine = StorageEngine(data_dir="dummy_data", serializer=Serializer())
+storage_engine = StorageEngine(serializer=Serializer())
 
 
 schema_student = {
@@ -40,7 +40,7 @@ students = [
         "FullName": f"Student_{i}",
         "GPA": round(random.uniform(2.0, 4.0), 2)
     }
-    for i in range(1, 51)
+    for i in range(1, 10001)
 ]
 
 courses = [
@@ -55,7 +55,7 @@ courses = [
 
 attends = [
     {
-        "StudentID": random.randint(1, 50),
+        "StudentID": random.randint(1, 10000),
         "CourseID": random.randint(1, 50),
         "Year": random.choice([2023, 2024, 2025])
     }

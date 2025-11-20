@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Union, List
+from typing import Union, List, Dict, Tuple, Any, Optional
+import os
 from b_plus_tree_index import BPlusTreeIndex
 from hash_index import HashIndex
 from pathlib import Path
@@ -22,12 +23,12 @@ class StorageEngine:
 
     def read_block(self, data_retrieval: DataRetrieval) -> Rows:
         """
-        TODO (buat pengembangan lanjut):
-        kalau data_retrieval.search_type == "index" dan index tersedia,
-        gunakan index untuk memperkecil candidate rows (bukan full scan).
+        kalo search_type="index", lakukan Random Access Read.
+        kalo tidak, lakukan Full Scan.
         """
 
         table = data_retrieval.table
+        BLOCK_SIZE = 1024
         schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_schema.dat"
         data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
 
@@ -39,40 +40,69 @@ class StorageEngine:
 
         skema = self.serializer.deserialize_schema(schema)
 
-        try:
+        # LOGIKA INDEX (Random Access Read)
+        candidate_indices = None
+        use_index = (
+            data_retrieval.search_type == "index" 
+            and data_retrieval.index_column is not None
+        )
+
+        if use_index:
+            target_col = data_retrieval.index_column
+            search_value = self._extract_search_value(data_retrieval.conditions, target_col)
+            
+            if search_value is not None:
+                index_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{target_col}_hash.dat"
+                if os.path.exists(index_file):
+                    candidate_indices = self._scan_using_hash_index(index_file, search_value)
+
+        result_rows = Rows()
+        target_columns = set(data_retrieval.column)
+        wants_all_columns = "*" in target_columns or not target_columns
+
+        # USE Index (lompat-lompat baca file)
+        if candidate_indices is not None:
+            row_size = self.serializer.get_row_size(skema["columns"])
+            rows_per_block = BLOCK_SIZE // row_size
+            
+            with open(data_file, "rb") as f:
+                for idx in candidate_indices:
+                    # Matematika Blok untuk mencari posisi byte
+                    block_idx = idx // rows_per_block
+                    inner_idx = idx % rows_per_block
+                    byte_offset = (block_idx * BLOCK_SIZE) + (inner_idx * row_size)
+                    
+                    f.seek(byte_offset) 
+                    row_binary = f.read(row_size) 
+                    
+                    if not row_binary: continue
+
+                    row = self.serializer.deserialize_single_row(row_binary, skema["columns"])
+                    
+                    if self._matches_conditions(row, data_retrieval.conditions):
+                        if wants_all_columns:
+                            result_rows.data.append(row)
+                        else:
+                            result_rows.data.append({k: v for k, v in row.items() if k in target_columns})
+                        result_rows.idx.append(idx)
+
+        # Linear Scan (Baca semua file - Fallback)
+        else:
             with open(data_file, "rb") as f:
                 binary_data = f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File data table for {table} table is not found")
+            
+            rows_data = self.serializer.deserialize_with_blocks(binary_data, skema["columns"])
+            
+            for idx, row in enumerate(rows_data):
+                if self._matches_conditions(row, data_retrieval.conditions):
+                    if wants_all_columns:
+                        result_rows.data.append(row)
+                    else:
+                        result_rows.data.append({k: v for k, v in row.items() if k in target_columns})
+                    result_rows.idx.append(idx)
 
-        rows_data = self.serializer.deserialize_with_blocks(binary_data, skema["columns"])
-
-        if len(rows_data) == 0:
-            return Rows()
-
-        # mencari semua column yang ada di rows_data
-        columns = set()
-        for row in rows_data:
-            columns.update(row.keys())
-
-        # mengurangi columns dengan kolom yang ada pada data_retrieval.column
-        columns = list(columns - set(data_retrieval.column))
-
-        temp = Rows()
-        for i in range(len(rows_data)):
-            if self._matches_conditions(rows_data[i], data_retrieval.conditions):
-                if len(data_retrieval.column) == 1 and data_retrieval.column[0] == "*":
-                    temp.data.append(rows_data[i])
-                    temp.idx.append(i)
-                else:
-                    # mengurangi rows_data[i] dengan column yang ada pada columns
-                    for col in columns:
-                        del rows_data[i][col]
-                    temp.data.append(rows_data[i])
-                    temp.idx.append(i)
-
-        temp.rows_count = len(temp.data)
-        return temp
+        result_rows.rows_count = len(result_rows.data)
+        return result_rows
 
     def _matches_conditions(self, row: dict, conditions: List) -> bool:
         """
@@ -267,23 +297,34 @@ class StorageEngine:
     def set_index(
         self, table: str, column: str, index_type: IndexType
     ) -> None:
-        """
-        table: Nama tabel untuk diindeks
-        column: Nama kolom untuk diindeks
-        index_type: Jenis indeks ("b+ tree" atau "hash")
-        """
+        schema_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_schema.dat"
+        data_file = f"{self.DATA_FOLDER}/{self.data_dir}/{table}.dat"
 
-        # TODO: Load data dari file data
+        if not os.path.exists(schema_file) or not os.path.exists(data_file):
+             raise FileNotFoundError(f"Tabel {table} tidak ditemukan, tidak bisa membuat index.")
 
-        if index_type == "b+ tree":
-            indexer = BPlusTreeIndex()
-            # TODO: indexing, tergantung format data
-            pass
-        elif index_type == "hash":
+        with open(schema_file, "rb") as f:
+            schema = self.serializer.deserialize_schema(f.read())
+        
+        with open(data_file, "rb") as f:
+            rows_data = self.serializer.deserialize_with_blocks(f.read(), schema["columns"])
+
+        if index_type == "hash" or index_type == "Hash":
             indexer = HashIndex()
-            # TODO: indexing, tergantung format data
-            pass
+            index_filename = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{column}_hash.dat"
+            
+            # Populate Index: Mapping Nilai -> List Index Baris
+            for i, row in enumerate(rows_data):
+                val = row.get(column)
+                if val is not None:
+                    indexer.insert(val, i)
+            
+            indexer.save(index_filename)
+            print(f"Index Hash berhasil dibuat: {index_filename}")
 
+        elif index_type == "b+ tree":
+            pass
+        
         return None
 
     def get_stats(self, table: str) -> Statistic:
@@ -372,3 +413,18 @@ class StorageEngine:
         data_bytes = self.serializer.serialize_with_blocks(data, schema)
         with open(data_file, "wb") as f:
             f.write(data_bytes)
+            
+    def _extract_search_value(self, conditions: Optional[List], target_col: str) -> Any:
+        # [Helper] Cari nilai operand jika ada kondisi '=' pada kolom target.
+        if not conditions:
+            return None
+        for cond in conditions:
+            if cond.column == target_col and cond.operation == "=":
+                return cond.operand
+        return None
+
+    def _scan_using_hash_index(self, index_path: str, search_key: Any) -> List[int]:
+        # [Helper] Load file hash index dan cari key-nya
+        indexer = HashIndex()
+        indexer.load(index_path)
+        return indexer.search(search_key)
