@@ -11,7 +11,7 @@ class TransactionSetsEntry:
     start_ts: int = 0  # When transaction started its validation phase
 
     def __repr__(self):
-        return (f"Sets(Read={self.read_set}, Write={self.write_set}, TS={self.start_ts})")
+        return f"Sets(Read={self.read_set}, Write={self.write_set}, TS={self.start_ts})"
 
 
 class ValidationBasedStrategy(ConcurrencyStrategy):
@@ -41,28 +41,32 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
         action_upper = action.strip().upper()
 
         if self.verbose:
-            print(f"[ValidationStrategy] TX {transaction_id} me-log '{action_upper}' pada '{object_id}'...")
+            print(
+                f"[ValidationStrategy] TX {transaction_id} me-log '{action_upper}' pada '{object_id}'..."
+            )
 
         if transaction_id not in self.transaction_sets:
             self.transaction_sets[transaction_id] = TransactionSetsEntry()
 
         entry = self.transaction_sets[transaction_id]
 
-        if action_upper == 'WRITE':
+        if action_upper == "WRITE":
             entry.write_set.add(object_id)
             if self.verbose:
-                print(f"    -> Sukses: WRITE log, '{object_id}' ditambah ke write_set TX {transaction_id}")
+                print(
+                    f"    -> Sukses: WRITE log, '{object_id}' ditambah ke write_set TX {transaction_id}"
+                )
 
-        elif action_upper == 'READ':
+        elif action_upper == "READ":
             # Cuma nyatet ke 'read_set' pribadinya dia
             entry.read_set.add(object_id)
             if self.verbose:
-                print(f"    -> Sukses: READ log, '{object_id}' ditambah ke read_set TX {transaction_id}")
+                print(
+                    f"    -> Sukses: READ log, '{object_id}' ditambah ke read_set TX {transaction_id}"
+                )
 
         else:
             raise ValueError(f"Aksi unkown {action}. Gunakan 'read' atau 'write'.")
-
-
 
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
         object_id = self._get_object_id(obj)
@@ -72,16 +76,20 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
         # Validasi dilakukan saat commit, bukan saat akses
         # Di fase READ/WRITE, semua aksi diizinkan terlebih dahulu
 
-        if action_upper == 'READ':
+        if action_upper == "READ":
             if self.verbose:
-                print(f"[ValidationStrategy] Validasi READ pada '{object_id}' untuk TX {transaction_id}: "
-                      f"DIIZINKAN (optimistic, akan divalidasi saat commit)")
+                print(
+                    f"[ValidationStrategy] Validasi READ pada '{object_id}' untuk TX {transaction_id}: "
+                    f"DIIZINKAN (optimistic, akan divalidasi saat commit)"
+                )
             return Response(allowed=True, transaction_id=transaction_id)
 
-        elif action_upper == 'WRITE':
+        elif action_upper == "WRITE":
             if self.verbose:
-                print(f"[ValidationStrategy] Validasi WRITE pada '{object_id}' untuk TX {transaction_id}: "
-                      f"DIIZINKAN (optimistic, akan divalidasi saat commit)")
+                print(
+                    f"[ValidationStrategy] Validasi WRITE pada '{object_id}' untuk TX {transaction_id}: "
+                    f"DIIZINKAN (optimistic, akan divalidasi saat commit)"
+                )
             return Response(allowed=True, transaction_id=transaction_id)
 
         else:
@@ -106,36 +114,47 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
         errors = []
 
         if self.verbose:
-            print(f"\n[ValidationStrategy] Validating TX {transaction_id} for commit...")
+            print(
+                f"\n[ValidationStrategy] Validating TX {transaction_id} for commit..."
+            )
             print(f"  Read set: {tx_entry.read_set}")
             print(f"  Write set: {tx_entry.write_set}")
 
         # Check conflicts with all committed transactions
+        # For backward validation (OCC): Check if committed transactions conflict with current transaction
         for committed_tx_id, committed_entry in self.committed_transactions.items():
             if committed_tx_id == transaction_id:
                 continue
 
-            # Write-Read Conflict:
-            # Committed transaction wrote something that current transaction read
-            write_read_conflict = committed_entry.write_set.intersection(tx_entry.read_set)
+            # Write-Read Conflict (Backward Validation):
+            # Check: WS(committed) ∩ RS(current) - Did we read stale data?
+            # Committed transaction wrote to objects that current transaction read
+            write_read_conflict = committed_entry.write_set.intersection(
+                tx_entry.read_set
+            )
             if write_read_conflict:
                 errors.append(
-                    f"Write-Read conflict with committed TX {committed_tx_id} "
-                    f"on objects: {write_read_conflict}"
+                    f"Write-Read conflict: Committed TX {committed_tx_id} wrote objects {write_read_conflict} that TX {transaction_id} read"
                 )
                 if self.verbose:
-                    print(f"  [FAIL] W-R Conflict with TX {committed_tx_id}: {write_read_conflict}")
+                    print(
+                        f"  [FAIL] W-R Conflict: Committed TX {committed_tx_id} wrote {write_read_conflict} that we read"
+                    )
 
-            # Write-Write Conflict:
-            # Committed transaction wrote something that current transaction wants to write
-            write_write_conflict = committed_entry.write_set.intersection(tx_entry.write_set)
+            # Write-Write Conflict (Backward Validation):
+            # Check: WS(committed) ∩ WS(current) - Lost update prevention
+            # Both transactions wrote to same objects
+            write_write_conflict = committed_entry.write_set.intersection(
+                tx_entry.write_set
+            )
             if write_write_conflict:
                 errors.append(
-                    f"Write-Write conflict with committed TX {committed_tx_id} "
-                    f"on objects: {write_write_conflict}"
+                    f"Write-Write conflict: Both TX {committed_tx_id} and TX {transaction_id} wrote to: {write_write_conflict}"
                 )
                 if self.verbose:
-                    print(f"  [FAIL] W-W Conflict with TX {committed_tx_id}: {write_write_conflict}")
+                    print(
+                        f"  [FAIL] W-W Conflict with committed TX {committed_tx_id}: {write_write_conflict}"
+                    )
 
         # Also check with active transactions that are in validation phase
         for active_tx_id, active_entry in self.transaction_sets.items():
@@ -144,7 +163,9 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
 
             # If another transaction is also trying to commit, check for conflicts
             # Write-Write conflict with active transactions
-            write_write_conflict = active_entry.write_set.intersection(tx_entry.write_set)
+            write_write_conflict = active_entry.write_set.intersection(
+                tx_entry.write_set
+            )
             if write_write_conflict:
                 # Use transaction_id as tie-breaker: lower ID wins
                 if transaction_id > active_tx_id:
@@ -153,7 +174,9 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
                         f"on objects: {write_write_conflict} (TX {transaction_id} must wait/abort)"
                     )
                     if self.verbose:
-                        print(f"  [FAIL] W-W Conflict with active TX {active_tx_id}: {write_write_conflict}")
+                        print(
+                            f"  [FAIL] W-W Conflict with active TX {active_tx_id}: {write_write_conflict}"
+                        )
 
         is_valid = len(errors) == 0
 
@@ -184,7 +207,9 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
             del self.transaction_sets[transaction_id]
 
             if self.verbose:
-                print(f"[ValidationStrategy] TX {transaction_id} validated and committed (TS={entry.start_ts})")
+                print(
+                    f"[ValidationStrategy] TX {transaction_id} validated and committed (TS={entry.start_ts})"
+                )
 
     def end_transaction(self, transaction_id: int):
         """Clean up transaction sets."""
@@ -209,12 +234,14 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
             sorted_txs = sorted(
                 self.committed_transactions.items(),
                 key=lambda x: x[1].start_ts,
-                reverse=True
+                reverse=True,
             )
 
             # Keep only recent ones
             self.committed_transactions = dict(sorted_txs[:keep_last_n])
 
             if self.verbose:
-                print(f"[ValidationStrategy] Garbage collected old committed transactions, "
-                      f"keeping {keep_last_n} most recent")
+                print(
+                    f"[ValidationStrategy] Garbage collected old committed transactions, "
+                    f"keeping {keep_last_n} most recent"
+                )
