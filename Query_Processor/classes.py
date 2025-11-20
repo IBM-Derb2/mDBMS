@@ -1,8 +1,11 @@
 from datetime import datetime
 import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Union
+from Storage_Manager.utils import Condition, DataRetrieval, DataWrite, DataDeletion
+from Storage_Manager.utils import Rows as StorageRows
 
 @dataclass
 class Rows:
@@ -32,6 +35,7 @@ class QueryProcessor:
         self.multiple_transaction = False
         self.result_storage = []
         self.query_storage = []
+        self.buffer = {}
 
     def execute_query(self, query: str) -> List[ExecutionResult]:
         query = query.strip()
@@ -54,42 +58,8 @@ class QueryProcessor:
         
         # Handle COMMIT
         if query_upper.startswith("COMMIT"):
-            try:
-                for q in self.query_storage:
-                    if not q.endswith(";"):
-                        raise ValueError("Query must end with a semicolon")
-                    
-                    parsed_query = self.optimizer.parse_query(q)
-                    result = self._process_node(parsed_query.query_tree)
-                    
-                    execution_result = ExecutionResult(
-                        data=result,
-                        message="Query executed successfully",
-                        query=q,
-                        transaction_id=self.current_transaction_id,
-                        timestamp=datetime.now(),
-                        rows_count=result.rows_count if result else 0
-                    )
-                    
-                    if self._is_write_query(q):
-                        self.fr_manager.write_log(execution_result)
-                    
-                    self.result_storage.append(execution_result)
-            except Exception as e:
-                self._rollback()
-                return [ExecutionResult(
-                    transaction_id=self.current_transaction_id or 0,
-                    query=query,
-                    timestamp=datetime.now(),
-                    message=f"Error processing transaction: {str(e)}",
-                    rows_count=0
-                )]
-            
-            self._commit()
-            final_result = self.result_storage.copy()
-            self.result_storage.clear()
-            self.query_storage.clear()
-            return final_result
+            self.buffer.clear()
+            return self._handle_commit(query)
 
         # Handle ROLLBACK
         if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
@@ -121,7 +91,7 @@ class QueryProcessor:
             
             execution_result = ExecutionResult(
                 data=result,
-                message=result.message or "Query executed successfully",
+                message= result.message or "Query executed successfully",
                 query=query,
                 transaction_id=self.current_transaction_id,
                 timestamp=datetime.now(),
@@ -136,7 +106,8 @@ class QueryProcessor:
             return [execution_result]
             
         except Exception as e:
-            print(f"[QP] Error executing query: {e}")
+            # print(f"[QP] Error executing query: {e}")
+            traceback.print_exc()
             if self.current_transaction_id is not None:
                 self._rollback()
             
@@ -165,6 +136,44 @@ class QueryProcessor:
             message="Transaction started."
         )
 
+    def _handle_commit(self, query):
+        try:
+            for q in self.query_storage:
+                if not q.endswith(";"):
+                    raise ValueError("Query must end with a semicolon")
+                
+                parsed_query = self.optimizer.parse_query(q)
+                result = self._process_node(parsed_query.query_tree)
+                
+                execution_result = ExecutionResult(
+                    data=result,
+                    message="Query executed successfully",
+                    query=q,
+                    transaction_id=self.current_transaction_id,
+                    timestamp=datetime.now(),
+                    rows_count=result.rows_count if result else 0
+                )
+                
+                if self._is_write_query(q):
+                    self.fr_manager.write_log(execution_result)
+                
+                self.result_storage.append(execution_result)
+        except Exception as e:
+            self._rollback()
+            return [ExecutionResult(
+                transaction_id=self.current_transaction_id or 0,
+                query=query,
+                timestamp=datetime.now(),
+                message=f"Error processing transaction: {str(e)}",
+                rows_count=0
+            )]
+        
+        self._commit()
+        final_result = self.result_storage.copy()
+        self.result_storage.clear()
+        self.query_storage.clear()
+        return final_result
+    
     def _handle_rollback(self, query):
         tid = self.current_transaction_id
         if self.current_transaction_id is not None:
@@ -179,6 +188,25 @@ class QueryProcessor:
             timestamp=datetime.now(),
             message="Transaction rolled back."
         )
+    
+    def _commit(self):
+        if self.current_transaction_id is not None:
+            self.cc_manager.commit_transaction(self.current_transaction_id)
+            self.current_transaction_id = None
+            self.multiple_transaction = False
+
+    def _rollback(self):
+        if self.current_transaction_id is not None:
+            self.cc_manager.abort_transaction(self.current_transaction_id, "Error")
+            self.current_transaction_id = None
+            self.multiple_transaction = False
+    
+    def _ensure_list(self, val):
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            return [val]
+        return []
 
     def _process_node(self, node) -> Rows:
         if node is None:
@@ -190,8 +218,9 @@ class QueryProcessor:
             return self._drop_table(node)
         
         elif node.type == "PROJECTION":
+            columns = self._ensure_list(node.val)
             child_result = self._process_node(node.childs[0])
-            return self._select_columns(child_result, node.val)
+            return self._select_columns(child_result, columns)
             
         elif node.type == "RELATION":
             return self._from_table(node)
@@ -228,17 +257,28 @@ class QueryProcessor:
             return Rows(data=[], rows_count=0)
     
     def _from_table(self, node):
-        from Storage_Manager.utils import DataRetrieval
         table_name = node.val
         self._validate_ccm(table_name, "read")
+        if table_name in self.buffer:
+            print(f"[QP] Buffer Hit for table: {table_name}")
+            cached_rows = self.buffer[table_name]
+            return Rows(data=cached_rows.data.copy(), rows_count=cached_rows.rows_count)
+        print(f"[QP] Buffer Miss. Reading from disk: {table_name}")
         data_retrieval = DataRetrieval(table=table_name, column=["*"], conditions=[])
+        print(f"[QP] Sending read request for table {table_name}")
+        print(f"[QP] Conditions: {data_retrieval.conditions}")
         storage_rows = self.storage_manager.read_block(data_retrieval)
-        return self._convert_to_qp_rows(storage_rows)
+        print(f"[QP] Received {len(storage_rows.data) if hasattr(storage_rows, 'data') else 0} rows, type: {type(storage_rows)}")
+        qp_rows = self._convert_to_qp_rows(storage_rows)
+        self.buffer[table_name] = qp_rows
+        return Rows(data=qp_rows.data.copy(), rows_count=qp_rows.rows_count)
 
     def _convert_to_qp_rows(self, storage_rows) -> Rows:
         data_list = []
         if hasattr(storage_rows, 'data'):
             data_list = storage_rows.data
+        elif isinstance(storage_rows, list):
+            data_list = storage_rows
         return Rows(data=data_list, rows_count=len(data_list))
     
     def _select_columns(self, data: Rows, select_cols) -> Rows:
@@ -262,52 +302,86 @@ class QueryProcessor:
     def _process_selection_stmt(self, node) -> Rows:
         base_rows = self._process_node(node.childs[0])
         if len(node.childs) < 2: return base_rows
-        return self._apply_condition(base_rows, node.childs[1])
+        table_name = "RESULT_SET"
+        if node.childs[0].type == "RELATION":
+            table_name = node.childs[0].val
+        return self._condition_storage(base_rows, node.childs[1], table_name)
 
-    def _apply_condition(self, rows: Rows, condition_node) -> Rows:
-        if rows.rows_count == 0: return rows
-        rows_data = rows.data
-        
-        if condition_node.type == "SELECTION":
-            parts = condition_node.val.split(" ")
-            if len(parts) < 2: return rows
-            attr = parts[0].lower()
-            op = parts[1]
-            val = " ".join(parts[2:]).strip("'") if len(parts) > 2 else ""
-            
-            is_numeric_col = False
-            if rows_data and attr in rows_data[0]:
-                if isinstance(rows_data[0][attr], (int, float)):
-                    is_numeric_col = True
-                    try: val = float(val) 
+    def _condition_storage(self, rows: Rows, condition_node, table_name: str) -> Rows:
+        """
+        Menerapkan kondisi filtering
+        """
+        if rows.rows_count == 0:
+            return rows
+        conditions = self._extract_conditions(condition_node)
+        dr = DataRetrieval(table=table_name, column=["*"], conditions=conditions)
+        print(f"[QP] Sending conditional read request for table {table_name} with conditions: {conditions}")
+        filtered_data = []
+        for row in rows.data:
+            if self._matches_retrieval_conditions(row, conditions):
+                filtered_data.append(row)
+        return Rows(data=filtered_data, rows_count=len(filtered_data))
+    
+    def _matches_retrieval_conditions(self, row: dict, conditions: List[Any]) -> bool:
+        if not conditions: return True
+        for cond in conditions:
+            row_val = None
+            for k, v in row.items():
+                if k.lower() == cond.column.lower():
+                    row_val = v
+                    break
+            if row_val is None: return False
+            if not self._evaluate_single_condition(row_val, cond):
+                return False
+        return True
+    
+    def _evaluate_single_condition(self, val, cond: Condition) -> bool:
+        op = cond.operation
+        target = cond.operand
+        try:
+            if isinstance(val, (int, float)) and isinstance(target, (int, float, str)):
+                target = float(target)
+                val = float(val)
+            else:
+                val = str(val)
+                target = str(target)
+        except:
+            pass
+
+        if op == "=": return val == target
+        elif op == "<>": return val != target
+        elif op == ">": return val > target
+        elif op == ">=": return val >= target
+        elif op == "<": return val < target
+        elif op == "<=": return val <= target
+        return False
+    
+    def _extract_conditions(self, node):
+        from Storage_Manager.utils import Condition
+        conditions = []
+        if hasattr(node, 'type'):
+            if node.type == "SELECTION":
+                parts = node.val.split(" ")
+                if len(parts) >= 3:
+                    col = parts[0].lower()
+                    op = parts[1]
+                    val = parts[2].strip("'")
+                    try:
+                        val = float(val)
+                        if val.is_integer(): val = int(val)
                     except: pass
-
-            filtered_rows = []
-            for row in rows_data:
-                if attr not in row: continue
-                row_val = row[attr]
-                try:
-                    if op == "=": 
-                        if str(row_val) == str(val): filtered_rows.append(row)
-                    elif op == "<>": 
-                        if str(row_val) != str(val): filtered_rows.append(row)
-                    elif is_numeric_col:
-                        if op == ">" and row_val > val: filtered_rows.append(row)
-                        elif op == ">=" and row_val >= val: filtered_rows.append(row)
-                        elif op == "<" and row_val < val: filtered_rows.append(row)
-                        elif op == "<=" and row_val <= val: filtered_rows.append(row)
-                except: continue
-            return Rows(data=filtered_rows, rows_count=len(filtered_rows))
-            
-        elif condition_node.type == "AND":
-            current = Rows(data=rows_data, rows_count=len(rows_data))
-            for child in condition_node.childs:
-                current = self._apply_condition(current, child)
-            return current
-        return rows
+                    conditions.append(Condition(column=col, operation=op, operand=val))
+            elif node.type in ["AND", "OR"]:
+                for child in node.childs:
+                    conditions.extend(self._extract_conditions(child))
+        return conditions
 
     def _update_table(self, node) -> Rows:
         from Storage_Manager.utils import DataWrite
+        print("\n[DEBUG UPDATE NODE]")
+        print(f"Child 0 (Table): {node.childs[0].val}")
+        if len(node.childs) > 1:
+            print(f"Child 1 (Set/Col): {node.childs[1].val} (Type: {type(node.childs[1].val)})")
         if not node.childs: raise ValueError("Invalid UPDATE tree")
         table = node.childs[0].val
         parts = node.val.split('=')
@@ -320,6 +394,7 @@ class QueryProcessor:
         
         dw = DataWrite(table=table, column=col, conditions=conditions, new_value=val)
         res = self.storage_manager.write_block(dw)
+        if table in self.buffer: del self.buffer[table]
         cnt = self._get_affected_count(res)
         return Rows(data=[], rows_count=cnt, message=f"Updated {cnt} rows")
 
@@ -331,6 +406,7 @@ class QueryProcessor:
         self._validate_ccm(table, "write")
         dw = DataWrite(table=table, column=cols, conditions=[], new_value=vals)
         res = self.storage_manager.write_block(dw)
+        if table in self.buffer: del self.buffer[table]
         cnt = self._get_affected_count(res)
         return Rows(data=[], rows_count=cnt, message=f"Inserted {cnt} rows")
 
@@ -342,6 +418,7 @@ class QueryProcessor:
         self._validate_ccm(table, "write")
         dd = DataDeletion(table=table, conditions=conditions)
         res = self.storage_manager.delete_block(dd)
+        if table in self.buffer: del self.buffer[table]
         return Rows(data=[], rows_count=res if isinstance(res, int) else 1, message=f"Deleted rows")
 
     def _order_by(self, data: Rows, order_by_val) -> Rows:
@@ -446,35 +523,3 @@ class QueryProcessor:
         if isinstance(result, int): return result
         if hasattr(result, 'rows_count'): return result.rows_count
         return 1
-
-    def _extract_conditions(self, node):
-        from Storage_Manager.utils import Condition
-        conditions = []
-        if hasattr(node, 'type'):
-            if node.type == "SELECTION":
-                parts = node.val.split(" ")
-                if len(parts) >= 3:
-                    col = parts[0].lower()
-                    op = parts[1]
-                    val = parts[2].strip("'")
-                    try:
-                        val = float(val)
-                        if val.is_integer(): val = int(val)
-                    except: pass
-                    conditions.append(Condition(column=col, operation=op, operand=val))
-            elif node.type in ["AND", "OR"]:
-                for child in node.childs:
-                    conditions.extend(self._extract_conditions(child))
-        return conditions
-
-    def _commit(self):
-        if self.current_transaction_id is not None:
-            self.cc_manager.commit_transaction(self.current_transaction_id)
-            self.current_transaction_id = None
-            self.multiple_transaction = False
-
-    def _rollback(self):
-        if self.current_transaction_id is not None:
-            self.cc_manager.abort_transaction(self.current_transaction_id, "Error")
-            self.current_transaction_id = None
-            self.multiple_transaction = False
