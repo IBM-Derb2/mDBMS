@@ -79,6 +79,9 @@ class OptimizationEngine:
         Menghitung biaya eksekusi dari query yang diberikan,
         dan adalah method pendukung untuk method optimize_query.
 
+        Uses statistics-based cost calculation automatically when available
+        for more accurate cost estimates.
+
         Args:
             query: Either a SQL query string or a ParsedQuery object
 
@@ -93,6 +96,46 @@ class OptimizationEngine:
         self._log(
             'debug', f"Calculating cost for query type: {parsed_query.query_tree.type}")
         cost = internal_get_cost(parsed_query, self.logger)
-        self._log('debug', f"Total query cost: {cost}")
+        self._log('debug', f"Total query cost: {cost} (statistics-based)")
 
         return cost
+
+    def get_detailed_cost(self, query: Union[str, ParsedQuery]) -> tuple[int, int]:
+        """
+        Menghitung biaya eksekusi dan estimasi jumlah baris hasil dari query.
+
+        Uses statistics-based cost calculation to provide:
+        - Accurate execution cost estimation
+        - Result cardinality estimation (number of rows)
+
+        Buat ngedebug banggg
+
+        Args:
+            query: Either a SQL query string or a ParsedQuery object
+
+        Returns:
+            Tuple of (total_cost, estimated_rows)
+            - total_cost: The total cost of executing the query
+            - estimated_rows: Estimated number of rows in the result set
+
+        Example:
+            >>> engine = OptimizationEngine()
+            >>> cost, rows = engine.get_detailed_cost("SELECT * FROM users WHERE age > 30")
+            >>> print(f"Cost: {cost}, Expected rows: {rows}")
+        """
+        if isinstance(query, str):
+            parsed_query = self.parse_query(query)
+        else:
+            parsed_query = query
+
+        self._log(
+            'debug', f"Calculating detailed cost for query type: {parsed_query.query_tree.type}")
+
+        from .lib.get_cost import internal_get_detailed_cost
+        cost, estimated_rows = internal_get_detailed_cost(
+            parsed_query, self.logger)
+
+        self._log(
+            'debug', f"Total query cost: {cost}, Estimated rows: {estimated_rows:,}")
+
+        return cost, estimated_rows
