@@ -132,7 +132,7 @@ class Serializer:
         binary_data.extend(current_block[:current_block_size])
         return bytes(binary_data)
 
-    def serialize_schema(self, schema: List[dict]) -> bytes:
+    def serialize_schema(self, schema: dict) -> bytes:
         """
         serialisasi skema tabel menjadi data biner.
 
@@ -178,7 +178,7 @@ class Serializer:
 
         return bytes(binary_data)
 
-    def deserialize_schema(self, binary_data: bytes) -> list[dict]:
+    def deserialize_schema(self, binary_data: bytes) -> dict:
         """
         deserialisasi data biner menjadi skema tabel.
 
