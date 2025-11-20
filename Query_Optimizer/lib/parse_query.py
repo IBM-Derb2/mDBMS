@@ -5,7 +5,7 @@ Orchestrates all the specialized parsers to parse SQL queries into QueryTree str
 
 from typing import List, Optional
 import logging
-from ..types import ParsedQuery, QueryTree
+from ..query_types import ParsedQuery, QueryTree
 from .helpers.tokenizer import SQLToken, SQLTokenizer
 from .parsers.base_parser import BaseParser
 from .parsers.expression_parser import ExpressionParser
@@ -59,7 +59,7 @@ class SQLParser(BaseParser):
         else:
             raise ValueError(
                 f"Unsupported query type: {self.current_token.value}")
-        
+
         if self.current_token and self.current_token.value == ';':
             self._advance()
 

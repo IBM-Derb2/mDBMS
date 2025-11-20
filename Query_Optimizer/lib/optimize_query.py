@@ -1,11 +1,31 @@
-from typing import Union
-from ..types import ParsedQuery
+from typing import Optional
+import logging
+from ..query_types import ParsedQuery
+from .optimization import QueryOptimizer
 
 
-def internal_optimize_query(query: Union[str, ParsedQuery]) -> ParsedQuery:
+def internal_optimize_query(
+    parsed_query: ParsedQuery,
+    logger: Optional[logging.Logger] = None
+) -> ParsedQuery:
     """
     Melakukan optimasi pada parsed query berdasarkan aturan optimisasi,
     kemudian mengembalikan query yang telah dipotimize.
-    Implementasi menggunakan genetic algorithm akan mendapatkan nilai bonus.
+
+    Args:
+        parsed_query: The parsed query to optimize
+        logger: Optional logger instance
+
+    Returns:
+        Optimized ParsedQuery
+
+    Note:
+        Implementasi menggunakan genetic algorithm akan mendapatkan nilai bonus.
     """
-    pass
+    # Create optimizer instance
+    optimizer = QueryOptimizer(logger=logger)
+
+    # Apply optimization rules
+    optimized_query = optimizer.optimize(parsed_query)
+
+    return optimized_query

@@ -3,7 +3,7 @@ Query Parsers
 Handles parsing of DML queries: SELECT, UPDATE, DELETE, INSERT.
 """
 
-from ...types import QueryTree
+from ...query_types import QueryTree
 from .base_parser import BaseParser
 from .expression_parser import ExpressionParser
 
@@ -75,7 +75,8 @@ class QueryParsers(BaseParser):
         while True:
             # Check for * (all columns)
             if not self.current_token:
-                raise ValueError("Unexpected end of input while parsing SELECT column list")
+                raise ValueError(
+                    "Unexpected end of input while parsing SELECT column list")
             if self.current_token.value == '*':
                 columns.append(QueryTree(type='COLUMN', val='*'))
                 self._advance()
@@ -267,7 +268,8 @@ class QueryParsers(BaseParser):
                 break
         order_children = []
         for col, dirn in zip(columns, directions):
-            order_children.append(QueryTree(type='ORDER_ITEM', val=dirn, childs=[col]))
+            order_children.append(
+                QueryTree(type='ORDER_ITEM', val=dirn, childs=[col]))
         return QueryTree(type='ORDER_BY', val='ORDER_BY', childs=order_children)
 
     def _parse_limit_clause(self) -> QueryTree:
@@ -410,7 +412,8 @@ class QueryParsers(BaseParser):
                 bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
                     f"Expected column name, got '{bad}'")
-            columns.append(QueryTree(type='COLUMN', val=self.current_token.value))
+            columns.append(
+                QueryTree(type='COLUMN', val=self.current_token.value))
             self._advance()
 
             if self._match_punctuation(','):
