@@ -87,7 +87,8 @@ class QueryProcessor:
                 is_implicit = True
             
             parsed_query = self.optimizer.parse_query(query)
-            result = self._process_node(parsed_query.query_tree)
+            optimized_query = self.optimizer.optimize_query(parsed_query)
+            result = self._process_node(optimized_query.query_tree)
             
             execution_result = ExecutionResult(
                 data=result,
@@ -217,24 +218,16 @@ class QueryProcessor:
         elif node.type == "DROP_TABLE":
             return self._drop_table(node)
         
-        elif node.type == "PROJECTION":
+        elif node.type == "PROJECT":  # Changed: optimizer uses PROJECT not PROJECTION
             columns = self._ensure_list(node.val)
             child_result = self._process_node(node.childs[0])
             return self._select_columns(child_result, columns)
-            
-        elif node.type == "RELATION":
+
+        elif node.type == "TABLE":  # Changed: optimizer uses TABLE not RELATION
             return self._from_table(node)
-            
-        elif node.type == "SELECTION_STMT":
+
+        elif node.type == "SELECT":
             return self._process_selection_stmt(node)
-            
-        elif node.type == "ORDER BY":
-            child_result = self._process_node(node.childs[0])
-            return self._order_by(child_result, node.val)
-            
-        elif node.type == "LIMIT":
-            child_result = self._process_node(node.childs[0])
-            return self._limit(child_result, int(node.val))
             
         elif node.type == "JOIN":
             left_result = self._process_node(node.childs[0])
@@ -252,7 +245,13 @@ class QueryProcessor:
             
         elif node.type == "DELETE":
             return self._delete_table(node)
-            
+
+        elif node.type == "FROM":
+            # FROM node contains table references, process first child
+            if node.childs:
+                return self._process_node(node.childs[0])
+            return Rows(data=[], rows_count=0)
+
         else:
             return Rows(data=[], rows_count=0)
     
@@ -300,12 +299,83 @@ class QueryProcessor:
         return Rows(data=result_data, rows_count=len(result_data))
 
     def _process_selection_stmt(self, node) -> Rows:
-        base_rows = self._process_node(node.childs[0])
-        if len(node.childs) < 2: return base_rows
-        table_name = "RESULT_SET"
-        if node.childs[0].type == "RELATION":
-            table_name = node.childs[0].val
-        return self._condition_storage(base_rows, node.childs[1], table_name)
+        """
+        Process SELECT node from optimizer.
+        SELECT node structure: childs = [COLUMNS, FROM, WHERE?, ORDER_BY?, LIMIT?]
+        This method orchestrates processing of SELECT components through _process_node.
+        """
+        # Extract components from SELECT children
+        columns_node = None
+        from_node = None
+        where_node = None
+        limit_node = None
+        order_by_node = None
+
+        for child in node.childs:
+            if child.type == "COLUMNS":
+                columns_node = child
+            elif child.type == "FROM":
+                from_node = child
+            elif child.type == "WHERE":
+                where_node = child
+            elif child.type == "LIMIT":
+                limit_node = child
+            elif child.type == "ORDER_BY":
+                order_by_node = child
+
+        # Process FROM clause through _process_node
+        if not from_node:
+            return Rows(data=[], rows_count=0)
+
+        base_rows = self._process_node(from_node)
+
+        # Apply WHERE filter
+        if where_node and where_node.childs:
+            # WHERE node contains OPERATOR tree with conditions
+            conditions = self._extract_conditions(where_node.childs[0])
+            filtered_data = []
+            for row in base_rows.data:
+                if self._matches_retrieval_conditions(row, conditions):
+                    filtered_data.append(row)
+            base_rows = Rows(data=filtered_data, rows_count=len(filtered_data))
+
+        # Apply ORDER BY through _process_node
+        if order_by_node:
+            base_rows = self._apply_order_by(base_rows, order_by_node)
+
+        # Apply LIMIT through _process_node
+        if limit_node:
+            base_rows = self._limit(base_rows, int(limit_node.val))
+
+        # Apply column selection through _process_node
+        if columns_node:
+            base_rows = self._apply_column_selection(base_rows, columns_node)
+
+        return base_rows
+
+    def _apply_order_by(self, data: Rows, order_by_node) -> Rows:
+        """Extract column and direction from ORDER_BY node and apply sorting"""
+        if not order_by_node.childs:
+            return data
+
+        # Structure: ORDER_BY -> ORDER_ITEM (ASC/DESC) -> COLUMN
+        order_item = order_by_node.childs[0]
+        direction = order_item.val  # ASC or DESC
+
+        if order_item.childs:
+            col_node = order_item.childs[0]
+            col_name = col_node.val
+            return self._order_by(data, [col_name, direction])
+
+        return data
+
+    def _apply_column_selection(self, data: Rows, columns_node) -> Rows:
+        """Extract columns from COLUMNS node and apply selection"""
+        if not columns_node.childs:
+            return data
+
+        columns = [col.val for col in columns_node.childs]
+        return self._select_columns(data, columns)
 
     def _condition_storage(self, rows: Rows, condition_node, table_name: str) -> Rows:
         """
@@ -422,11 +492,12 @@ class QueryProcessor:
         return Rows(data=[], rows_count=res if isinstance(res, int) else 1, message=f"Deleted rows")
 
     def _order_by(self, data: Rows, order_by_val) -> Rows:
-        if not data.data: return data
-        
+        if not data.data:
+            return data
+
         col_name = order_by_val
         reverse = False
-        
+
         # Check format jika optimizer mengirim list [col, direction]
         if isinstance(order_by_val, list):
             col_name = order_by_val[0]
@@ -436,16 +507,25 @@ class QueryProcessor:
             col_name = order_by_val.split(" ")[0]
             reverse = True
 
-        # Lakukan sorting in-memory
+        # Find the actual column name (case-insensitive)
         try:
+            actual_col = None
+            if data.data:
+                for key in data.data[0].keys():
+                    if key.lower() == col_name.lower():
+                        actual_col = key
+                        break
+
+            if actual_col is None:
+                return data
+
             sorted_data = sorted(
-                data.data, 
-                key=lambda x: x.get(col_name.lower(), 0), 
+                data.data,
+                key=lambda x: x.get(actual_col, 0),
                 reverse=reverse
             )
             return Rows(data=sorted_data, rows_count=len(sorted_data))
-        except Exception as e:
-            print(f"[QP Warning] Sort failed: {e}")
+        except Exception:
             return data
 
     def _cartesian(self, node) -> Rows:
