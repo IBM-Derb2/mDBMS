@@ -1,11 +1,11 @@
 import sys
 import os
-
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
 import unittest
 from unittest.mock import Mock, MagicMock
 from datetime import datetime
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 from Query_Processor.classes import QueryProcessor, ExecutionResult, Rows
 from Query_Optimizer.types import ParsedQuery, QueryTree
@@ -112,7 +112,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertEqual(len(result), 1)
         self.assertIn("Empty query", result[0].message)
         self.assertEqual(result[0].rows_count, 0)
-        print("✓ Test 01: Empty query handling")
+        print("\n✓ Test 01: Empty query handling")
 
     def test_02_query_without_semicolon(self):
         """Test query without semicolon validation"""
@@ -121,7 +121,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         self.assertIsInstance(result, list)
         self.assertIn("semicolon", result[0].message)
-        print("✓ Test 02: Query without semicolon validation")
+        print("\n✓ Test 02: Query without semicolon validation")
 
     def test_03_simple_select(self):
         """Test simple SELECT query"""
@@ -138,7 +138,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertEqual(result[0].data.data[0]['name'], 'Alice')
         self.assertEqual(result[0].data.data[1]['name'], 'Bob')
         self.assertEqual(result[0].data.data[2]['name'], 'Charlie')
-        print("✓ Test 03: Simple SELECT query")
+        print("\n✓ Test 03: Simple SELECT query")
 
     def test_04_select_without_where(self):
         """Test SELECT query without WHERE clause (edge case)"""
@@ -148,7 +148,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Should return all rows
         self.assertEqual(result[0].rows_count, 3)
         self.mock_storage.read_block.assert_called()
-        print("✓ Test 04: SELECT without WHERE clause")
+        print("\n✓ Test 04: SELECT without WHERE clause")
 
     def test_05_select_with_where(self):
         """Test SELECT query with WHERE clause"""
@@ -164,7 +164,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         self.assertIsInstance(result, list)
         self.assertIsNotNone(result[0].data)
-        print("✓ Test 05: SELECT with WHERE clause")
+        print("\n✓ Test 05: SELECT with WHERE clause")
     
     def test_06_begin_transaction(self):
         """Test BEGIN TRANSACTION command"""
@@ -176,7 +176,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertEqual(self.qp.current_transaction_id, 1)
         self.assertTrue(self.qp.multiple_transaction)
         self.assertIn("Transaction started", result[0].message)
-        print("✓ Test 06: BEGIN TRANSACTION")
+        print("\n✓ Test 06: BEGIN TRANSACTION")
 
     def test_07_commit_transaction(self):
         """Test COMMIT command"""
@@ -193,7 +193,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertIsNone(self.qp.current_transaction_id)
         self.assertFalse(self.qp.multiple_transaction)
         self.mock_ccm.commit_transaction.assert_called()
-        print("✓ Test 07: COMMIT transaction")
+        print("\n✓ Test 07: COMMIT transaction")
 
     def test_08_multi_query_transaction(self):
         """Test multiple queries in one transaction"""
@@ -210,7 +210,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Should have multiple results
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 2)  # Two SELECT queries
-        print("✓ Test 08: Multi-query transaction")
+        print("\n✓ Test 08: Multi-query transaction")
 
     def test_09_rollback_on_error(self):
         """Test rollback on query error"""
@@ -226,7 +226,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         self.assertIsInstance(result, list)
         self.assertIn("Error", result[0].message)
-        print("✓ Test 09: Rollback on error")
+        print("\n✓ Test 09: Rollback on error")
 
     
     def test_10_query_optimizer_integration(self):
@@ -239,7 +239,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         # Verify parse tree was processed
         self.assertTrue(hasattr(self.qp, '_process_node'))
-        print("✓ Test 10: Query Optimizer integration")
+        print("\n✓ Test 10: Query Optimizer integration")
 
     def test_11_storage_manager_integration(self):
         """Test integration with Storage Manager"""
@@ -252,7 +252,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Verify data from Storage Manager is returned correctly
         self.assertEqual(result[0].data.data[0]['salary'], 1200)
         self.assertEqual(result[0].data.data[1]['salary'], 900)
-        print("✓ Test 11: Storage Manager integration")
+        print("\n✓ Test 11: Storage Manager integration")
 
     def test_12_concurrency_control_integration(self):
         """Test integration with Concurrency Control Manager"""
@@ -263,7 +263,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.mock_ccm.begin_transaction.assert_called()
         self.mock_ccm.validate_object.assert_called()
         self.mock_ccm.commit_transaction.assert_called()
-        print("✓ Test 12: Concurrency Control Manager integration")
+        print("\n✓ Test 12: Concurrency Control Manager integration")
 
     def test_13_failure_recovery_integration(self):
         """Test integration with Failure Recovery Manager"""
@@ -280,7 +280,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Verify Failure Recovery Manager was called for write operations
         # Note: FRM should log write operations
         self.assertTrue(hasattr(self.qp, 'fr_manager'))
-        print("✓ Test 13: Failure Recovery Manager integration")
+        print("\n✓ Test 13: Failure Recovery Manager integration")
 
     
     def test_14_process_node_projection(self):
@@ -290,7 +290,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         self.assertIsNotNone(result[0].data)
         self.assertTrue(hasattr(self.qp, '_select_columns'))
-        print("✓ Test 14: Process PROJECTION node")
+        print("\n✓ Test 14: Process PROJECTION node")
 
     def test_15_process_node_relation(self):
         """Test _process_node handles RELATION (FROM)"""
@@ -300,7 +300,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Verify FROM was processed
         self.mock_storage.read_block.assert_called()
         self.assertTrue(hasattr(self.qp, '_from_table'))
-        print("✓ Test 15: Process RELATION node")
+        print("\n✓ Test 15: Process RELATION node")
 
     def test_16_process_node_selection(self):
         """Test _process_node handles SELECTION (WHERE)"""
@@ -313,14 +313,14 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         query = "SELECT * FROM users WHERE id = 1;"
         result = self.qp.execute_query(query)
         
-        self.assertTrue(hasattr(self.qp, '_apply_condition'))
-        print("✓ Test 16: Process SELECTION node")
+        self.assertTrue(hasattr(self.qp, '_condition_storage'))
+        print("\n✓ Test 16: Process SELECTION node")
 
     def test_17_nested_loop_join_method_exists(self):
         """Test nested loop join method exists"""
         # Verify nested loop join method is implemented
         self.assertTrue(hasattr(self.qp, '_nested_loop_join'))
-        print("✓ Test 17: Nested loop join method exists")
+        print("\n✓ Test 17: Nested loop join method exists")
 
     def test_18_nested_loop_join_execution(self):
         """Test nested loop join is actually used"""
@@ -349,13 +349,13 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         # Verify join was performed
         self.assertIsNotNone(result[0].data)
-        print("✓ Test 18: Nested loop join execution")
+        print("\n✓ Test 18: Nested loop join execution")
 
     
     def test_19_order_by_operation(self):
         """Test ORDER BY operation"""
         self.assertTrue(hasattr(self.qp, '_order_by'))
-        print("✓ Test 19: ORDER BY operation exists")
+        print("\n✓ Test 19: ORDER BY operation exists")
 
     def test_20_limit_operation(self):
         """Test LIMIT operation"""
@@ -368,7 +368,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         )
         limited = self.qp._limit(test_data, 5)
         self.assertEqual(limited.rows_count, 5)
-        print("✓ Test 20: LIMIT operation")
+        print("\n✓ Test 20: LIMIT operation")
 
     def test_21_update_operation(self):
         """Test UPDATE operation"""
@@ -382,7 +382,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.mock_storage.write_block.assert_called()
-        print("✓ Test 21: UPDATE operation")
+        print("\n✓ Test 21: UPDATE operation")
 
     def test_22_insert_operation(self):
         """Test INSERT operation"""
@@ -396,7 +396,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.mock_storage.write_block.assert_called()
-        print("✓ Test 22: INSERT operation")
+        print("\n✓ Test 22: INSERT operation")
 
     def test_23_delete_operation(self):
         """Test DELETE operation"""
@@ -406,7 +406,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.mock_storage.delete_block.assert_called()
-        print("✓ Test 23: DELETE operation")
+        print("\n✓ Test 23: DELETE operation")
 
     
     def test_24_select_empty_result(self):
@@ -421,7 +421,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.assertEqual(result[0].rows_count, 0)
-        print("✓ Test 24: SELECT with empty result")
+        print("\n✓ Test 24: SELECT with empty result")
 
     def test_25_concurrent_read_validation(self):
         """Test concurrent read validation with CCM"""
@@ -431,7 +431,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Verify read validation was called
         calls = self.mock_ccm.validate_object.call_args_list
         self.assertTrue(any('read' in str(call) for call in calls))
-        print("✓ Test 25: Concurrent read validation")
+        print("\n✓ Test 25: Concurrent read validation")
 
     def test_26_concurrent_write_validation(self):
         """Test concurrent write validation with CCM"""
@@ -447,7 +447,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         # Verify write validation was called
         calls = self.mock_ccm.validate_object.call_args_list
         self.assertTrue(any('write' in str(call) for call in calls))
-        print("✓ Test 26: Concurrent write validation")
+        print("\n✓ Test 26: Concurrent write validation")
 
     def test_27_query_with_multiple_conditions(self):
         """Test query with multiple WHERE conditions"""
@@ -461,12 +461,12 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.assertIsNotNone(result[0].data)
-        print("✓ Test 27: Query with multiple conditions")
+        print("\n✓ Test 27: Query with multiple conditions")
 
     def test_28_cartesian_product_method(self):
         """Test cartesian product method exists"""
         self.assertTrue(hasattr(self.qp, '_cartesian'))
-        print("✓ Test 28: Cartesian product method exists")
+        print("\n✓ Test 28: Cartesian product method exists")
 
     def test_29_column_projection(self):
         """Test column projection (SELECT specific columns)"""
@@ -482,12 +482,12 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         )
         projected = self.qp._select_columns(test_data, ["name"])
         self.assertIn("name", projected.data[0])
-        print("✓ Test 29: Column projection")
+        print("\n✓ Test 29: Column projection")
 
     def test_30_condition_operators(self):
         """Test different condition operators in WHERE clause"""
-        self.assertTrue(hasattr(self.qp, '_apply_condition'))
-        print("✓ Test 30: Condition operators exist")
+        self.assertTrue(hasattr(self.qp, '_condition_storage'))
+        print("\n✓ Test 30: Condition operators exist")
 
     
     def test_31_execution_result_structure(self):
@@ -503,7 +503,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertIsNotNone(result[0].timestamp)
         self.assertIsNotNone(result[0].message)
         self.assertIsNotNone(result[0].data)
-        print("✓ Test 31: ExecutionResult structure")
+        print("\n✓ Test 31: ExecutionResult structure")
 
     def test_32_result_data_format(self):
         """Test result data format from query execution"""
@@ -515,7 +515,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertIsInstance(result[0].data.data, list)
         self.assertGreater(len(result[0].data.data), 0)
         self.assertIsInstance(result[0].data.data[0], dict)
-        print("✓ Test 32: Result data format")
+        print("\n✓ Test 32: Result data format")
 
     def test_33_error_message_format(self):
         """Test error message format"""
@@ -523,7 +523,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         self.assertIn("Error", result[0].message)
         self.assertEqual(result[0].rows_count, 0)
-        print("✓ Test 33: Error message format")
+        print("\n✓ Test 33: Error message format")
 
     def test_34_success_message_format(self):
         """Test success message format"""
@@ -531,7 +531,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         result = self.qp.execute_query(query)
         
         self.assertIn("success", result[0].message.lower())
-        print("✓ Test 34: Success message format")
+        print("\n✓ Test 34: Success message format")
 
     
     def test_35_complete_workflow(self):
@@ -558,7 +558,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertIsInstance(commit_result, list)
         self.assertEqual(len(commit_result), 2)  # SELECT + UPDATE
         self.mock_ccm.commit_transaction.assert_called()
-        print("✓ Test 35: Complete workflow")
+        print("\n✓ Test 35: Complete workflow")
 
     def test_36_all_components_initialized(self):
         """Test all components are properly initialized"""
@@ -566,7 +566,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.assertIsNotNone(self.qp.storage_manager)
         self.assertIsNotNone(self.qp.cc_manager)
         self.assertIsNotNone(self.qp.fr_manager)
-        print("✓ Test 36: All components initialized")
+        print("\n✓ Test 36: All components initialized")
 
     def test_37_method_existence_check(self):
         """Test all required methods exist"""
@@ -574,7 +574,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
             '_process_node',
             '_from_table',
             '_select_columns',
-            '_apply_condition',
+            '_condition_storage',
             '_order_by',
             '_limit',
             '_nested_loop_join',
@@ -589,7 +589,7 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         for method in required_methods:
             self.assertTrue(hasattr(self.qp, method), f"Method {method} not found")
         
-        print("✓ Test 37: All required methods exist")
+        print("\n✓ Test 37: All required methods exist")
 
 
 if __name__ == "__main__":
