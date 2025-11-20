@@ -4,7 +4,7 @@ import os
 from b_plus_tree_index import BPlusTreeIndex
 from hash_index import HashIndex
 from pathlib import Path
-from Storage_Manager.utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
+from utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from math import ceil
 from serializer import Serializer
 
