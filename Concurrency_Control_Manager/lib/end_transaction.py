@@ -3,6 +3,7 @@ from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
 from .undo_log import UndoLogManager
+from .transaction_model import TransactionStatus  
 
 
 class EndTransactionResult(Enum):
@@ -32,27 +33,13 @@ class EndTransactionReport:
 class EndTransactionManager:
 
     def __init__(self, tx_manager, strategy, undo_log_manager: Optional[UndoLogManager] = None):
-        """
-        things / vars yg dedicated for logging/debugging/reporting:
-        - end_transaction_history
-        - verbose: to toggle debug printing throughout the process
-        """
-
         self.tx_manager = tx_manager
         self.strategy = strategy
         self.undo_log_manager = undo_log_manager if undo_log_manager else UndoLogManager()
         self.end_transaction_history: List[EndTransactionReport] = []
-        self.verbose = True # just turn it off kalau gk butuh
+        self.verbose = True
     
     def end_transaction(self, transaction_id: int, is_commit: bool = True) -> EndTransactionReport:
-        """
-        things / vars yg dedicated for logging/debugging/reporting:
-        - start_time
-        - locks_released
-        - resources_cleaned
-        - end_time
-        """
-        
         start_time = datetime.now()
         locks_released = []
         resources_cleaned = []
@@ -74,32 +61,38 @@ class EndTransactionManager:
                 print(f"Status saat ini: {tx.status.value}")
                 print(f"{'='*60}")
             
-            # validasi final
             if is_commit:
-                # Use strategy-specific validation if available (for OCC)
-                if hasattr(self.strategy, 'validate_for_commit'):
-                    is_valid, strategy_errors = self.strategy.validate_for_commit(transaction_id)
-                    if not is_valid:
-                        validation_errors.extend(strategy_errors)
-                        result = EndTransactionResult.VALIDATION_FAILED
-                        if self.verbose:
-                            print(f"[FAIL] Validasi strategi GAGAL:")
-                            for error in strategy_errors:
-                                print(f"  - {error}")
-                        # gagal, paksa abort
-                        is_commit = False
+                # Check if validation is needed for this strategy
+                if self._validation_needed_for_strategy():
+                    if self.verbose:
+                        print(f"[EndTxManager] Performing final validation for {self.strategy.__class__.__name__}")
+                    
+                    # Use strategy-specific validation if available
+                    if hasattr(self.strategy, 'validate_for_commit'):
+                        is_valid, strategy_errors = self.strategy.validate_for_commit(transaction_id)
+                        if not is_valid:
+                            validation_errors.extend(strategy_errors)
+                            result = EndTransactionResult.VALIDATION_FAILED
+                            if self.verbose:
+                                print(f"[FAIL] Validasi strategi GAGAL:")
+                                for error in strategy_errors:
+                                    print(f"  - {error}")
+                            is_commit = False
+                    else:
+                        # Fallback to generic validation
+                        validation_result = self._perform_final_validation(transaction_id)
+                        if not validation_result['valid']:
+                            validation_errors.extend(validation_result['errors'])
+                            result = EndTransactionResult.VALIDATION_FAILED
+                            if self.verbose:
+                                print(f"[FAIL] Validasi akhir GAGAL:")
+                                for error in validation_result['errors']:
+                                    print(f"  - {error}")
+                            is_commit = False
                 else:
-                    # Fallback to generic validation for other strategies
-                    validation_result = self._perform_final_validation(transaction_id)
-                    if not validation_result['valid']:
-                        validation_errors.extend(validation_result['errors'])
-                        result = EndTransactionResult.VALIDATION_FAILED
-                        if self.verbose:
-                            print(f"[FAIL] Validasi akhir GAGAL:")
-                            for error in validation_result['errors']:
-                                print(f"  - {error}")
-                        # gagal, paksa abort
-                        is_commit = False
+                    if self.verbose:
+                        print(f"[EndTxManager] Final validation not required for {self.strategy.__class__.__name__}")
+                        print(f"[EndTxManager] Conflict prevention already handled by strategy mechanism")
             
             # get daftar resources yang perlu di cleanup
             accessed_objects = tx.get_accessed_objects()
@@ -118,7 +111,7 @@ class EndTransactionManager:
                 self.tx_manager.commit_transaction(transaction_id)
                 resources_cleaned.append(f"Transaction {transaction_id} committed")
                 
-                # mark as committed
+                # mark as committed in strategy if needed
                 if hasattr(self.strategy, 'commit_validation'):
                     self.strategy.commit_validation(transaction_id)
                 
@@ -149,7 +142,6 @@ class EndTransactionManager:
                 resources_cleaned.append(f"Transaction {transaction_id} aborted")
             
             # release the locks
-            
             if self.verbose:
                 print(f"\nMelepaskan locks/resources...")
                 
@@ -173,6 +165,9 @@ class EndTransactionManager:
                 print(f"\nCRITICAL ERROR: {e}")
                 print(f"Performing emergency cleanup...")
             
+            tx = self.tx_manager.get_transaction(transaction_id)
+            current_status = tx.status if tx else None
+            
             try:
                 self.strategy.end_transaction(transaction_id)
                 if self.verbose:
@@ -181,13 +176,22 @@ class EndTransactionManager:
                 if self.verbose:
                     print(f"Emergency lock release failed: {cleanup_error}")
             
-            try:
-                self.tx_manager.terminate_transaction(transaction_id)
-                if self.verbose:
-                    print(f"Emergency: transaction terminated")
-            except Exception as term_error:
-                if self.verbose:
-                    print(f"Emergency termination failed: {term_error}")
+            # terminate transaction if needed
+            if current_status and current_status != TransactionStatus.TERMINATED:
+                try:
+                    # ensure transaction is in terminatable state
+                    if current_status not in [TransactionStatus.COMMITTED, TransactionStatus.ABORTED]:
+                        self.tx_manager.fail_transaction(transaction_id, "Emergency cleanup")
+                        self.tx_manager.abort_transaction(transaction_id)
+                    
+                    self.tx_manager.terminate_transaction(transaction_id)
+                    if self.verbose:
+                        print(f"Emergency: transaction terminated")
+                except Exception as term_error:
+                    if self.verbose:
+                        print(f"Emergency termination failed: {term_error}")
+            elif self.verbose:
+                print(f"Emergency: transaction already terminated")
             
             if self.verbose:
                 print(f"Emergency cleanup completed")
@@ -212,11 +216,11 @@ class EndTransactionManager:
         self.end_transaction_history.append(report)
         return report
     
+    def _validation_needed_for_strategy(self) -> bool:
+        strategy_name = self.strategy.__class__.__name__
+        return (strategy_name == 'ValidationBasedStrategy')
+    
     def _perform_final_validation(self, transaction_id: int) -> Dict[str, Any]:
-        """
-        Melakukan validasi akhir sebelum commit.
-        Terutama untuk Validation-Based Strategy.
-        """
         errors = []
         valid = True
         
@@ -260,8 +264,6 @@ class EndTransactionManager:
     ) -> List[str]:
         released = []
         
-        # Ini udah haddled oleh strategy.end_transaction()
-        # tapi kita track just for the sake of reporting
         for obj_id in accessed_objects:
             released.append(f"Resource: {obj_id}")
         
