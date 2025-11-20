@@ -3,7 +3,7 @@ Utility functions for query tree manipulation and analysis
 """
 
 from typing import List, Set, Dict, Optional
-from Query_Optimizer.types import QueryTree
+from Query_Optimizer.query_types import QueryTree
 
 
 class TreeAnalyzer:

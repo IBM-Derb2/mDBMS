@@ -10,7 +10,7 @@ Implements equivalence rules for join operations:
 
 from typing import Optional, List
 import logging
-from Query_Optimizer.types import QueryTree
+from Query_Optimizer.query_types import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
 
 

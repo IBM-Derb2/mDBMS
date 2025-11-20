@@ -14,10 +14,9 @@ Implements equivalence rules for distributing operations:
 
 from typing import Optional, Set
 import logging
-from Query_Optimizer.types import QueryTree
+from Query_Optimizer.query_types import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
 from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
-
 
 
 class DistributionRule(OptimizationRule):
@@ -40,7 +39,7 @@ class DistributionRule(OptimizationRule):
         # Check if we have selection/projection over join
         return (self._has_selection_over_join(tree) or
                 self._has_projection_over_join(tree))
-    
+
     def _link_parents(self, node: QueryTree, parent: Optional[QueryTree] = None):
         """
         Helper rekursif untuk mengisi pointer parent yang hilang.
@@ -214,16 +213,18 @@ class DistributionRule(OptimizationRule):
 
             if lookup_name in relation_conditions:
                 conditions = relation_conditions[lookup_name]
-                
+
                 expr_parts = []
                 for cond in conditions:
                     if 'expression' in cond:
                         expr_parts.append(cond['expression'])
                     elif 'left' in cond and 'operator' in cond:
                         right_val = cond.get('right', '')
-                        expr_parts.append(f"{cond['left']} {cond['operator']} {right_val}")
-                
-                if not expr_parts: continue
+                        expr_parts.append(
+                            f"{cond['left']} {cond['operator']} {right_val}")
+
+                if not expr_parts:
+                    continue
 
                 combined_expression = " AND ".join(expr_parts)
 
@@ -232,18 +233,18 @@ class DistributionRule(OptimizationRule):
                 already_exists = False
                 while curr:
                     # Berhenti jika ketemu boundary (JOIN/SELECT) agar tidak scan terlalu jauh
-                    if curr.type in ('JOIN', 'SELECT', 'FROM'): 
+                    if curr.type in ('JOIN', 'SELECT', 'FROM'):
                         break
                     if curr.type == 'WHERE' and curr.val == combined_expression:
                         already_exists = True
                         break
                     curr = curr.parent
-                
+
                 if already_exists:
-                    continue 
+                    continue
 
                 self._log('debug', f"Pushing conditions to {lookup_name}")
-                
+
                 new_where_node = QueryTree(
                     type='WHERE',
                     val=combined_expression,
@@ -288,32 +289,34 @@ class DistributionRule(OptimizationRule):
         self._log('debug', f"Join attributes: {join_attributes}")
         return join_attributes
 
-    def _apply_pushed_projections(self, tree: QueryTree, 
-                                required_columns: Set[str], 
-                                join_attributes: Set[str]) -> QueryTree:
+    def _apply_pushed_projections(self, tree: QueryTree,
+                                  required_columns: Set[str],
+                                  join_attributes: Set[str]) -> QueryTree:
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
 
         all_needed_columns = required_columns.union(join_attributes)
-        if not all_needed_columns: return tree
-            
+        if not all_needed_columns:
+            return tree
+
         table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
-        if not table_nodes: table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
+        if not table_nodes:
+            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
 
         for node in table_nodes:
             target_node = node
-            lookup_name = node.val 
+            lookup_name = node.val
 
             if node.parent and node.parent.type == 'ALIAS':
                 target_node = node.parent
                 lookup_name = target_node.val
-            
+
             table_columns = set()
             for col in all_needed_columns:
                 if '.' in col:
                     t_part, c_part = col.split('.', 1)
                     if t_part == lookup_name:
                         table_columns.add(col)
-            
+
             if table_columns:
                 proj_val = ", ".join(sorted(list(table_columns)))
 
@@ -321,22 +324,25 @@ class DistributionRule(OptimizationRule):
                 curr = target_node.parent
                 already_exists = False
                 while curr:
-                    if curr.type in ('JOIN', 'SELECT', 'FROM'): break
+                    if curr.type in ('JOIN', 'SELECT', 'FROM'):
+                        break
                     if curr.type == 'PROJECT' and curr.val == proj_val:
                         already_exists = True
                         break
                     curr = curr.parent
-                
-                if already_exists: continue
-                
+
+                if already_exists:
+                    continue
+
                 self._log('debug', f"Pushing projection to {lookup_name}")
-                
+
                 new_project_node = QueryTree(
                     type='PROJECT',
                     val=proj_val,
                     childs=[],
                     parent=None
                 )
-                TreeManipulator.insert_node_above(target_node, new_project_node)
+                TreeManipulator.insert_node_above(
+                    target_node, new_project_node)
 
         return tree

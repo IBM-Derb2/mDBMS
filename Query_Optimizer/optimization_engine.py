@@ -3,7 +3,7 @@
 import logging
 from typing import Optional, Union
 
-from .types import ParsedQuery
+from .query_types import ParsedQuery
 from .lib.parse_query import internal_parse_query
 from .lib.get_cost import internal_get_cost
 

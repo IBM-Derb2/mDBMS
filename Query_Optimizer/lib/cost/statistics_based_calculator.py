@@ -5,7 +5,7 @@ Enhanced cost calculator that uses database statistics for more accurate cost es
 This allows the optimizer to show measurable improvements.
 """
 
-from ...types import QueryTree
+from ...query_types import QueryTree
 from .statistics import get_statistics_manager
 
 

@@ -7,7 +7,7 @@ Uses statistics-based cost calculation when available for more accurate estimate
 
 from typing import Union, Optional, Tuple
 import logging
-from ..types import ParsedQuery
+from ..query_types import ParsedQuery
 from .cost.cost_calculator import calculate_node_cost
 
 # Try to import statistics-based calculator for detailed cost info

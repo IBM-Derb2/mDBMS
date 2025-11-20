@@ -5,7 +5,7 @@ Orchestrates the application of all optimization rules
 
 from typing import Optional, List
 import logging
-from Query_Optimizer.types import ParsedQuery, QueryTree
+from Query_Optimizer.query_types import ParsedQuery, QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
 from Query_Optimizer.lib.optimization.rules import (
     SelectionRule,

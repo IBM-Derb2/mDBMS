@@ -3,7 +3,7 @@ Cost Calculator
 Handles calculation of query execution costs for optimization.
 """
 
-from ...types import QueryTree
+from ...query_types import QueryTree
 
 # Feature flag to enable statistics-based costing
 USE_STATISTICS = True

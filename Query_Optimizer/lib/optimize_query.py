@@ -1,6 +1,6 @@
 from typing import Optional
 import logging
-from ..types import ParsedQuery
+from ..query_types import ParsedQuery
 from .optimization import QueryOptimizer
 
 

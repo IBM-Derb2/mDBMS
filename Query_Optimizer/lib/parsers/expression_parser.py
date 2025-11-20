@@ -3,7 +3,7 @@ Expression Parser
 Handles parsing of SQL expressions including arithmetic, comparisons, and logical operators.
 """
 
-from ...types import QueryTree
+from ...query_types import QueryTree
 from .base_parser import BaseParser
 
 
