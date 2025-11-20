@@ -4,7 +4,7 @@ import os
 import random
 
 from storage_engine import StorageEngine
-from Storage_Manager.utils import DataRetrieval, Condition
+from utils import DataRetrieval, Condition
 from serializer import Serializer
 
 
@@ -173,7 +173,7 @@ class TestStorageEngine(unittest.TestCase):
         rows = self.storage.read_block(dr)
 
         self.assertGreater(rows.rows_count, 0)
-        print(f"Test read_block: {rows.rows_count} rows found (GPA > 3.5)")
+        print(f"Test read_block:\n{rows.rows_count} rows found (GPA > 3.5)")
         
 if __name__ == "__main__":
     unittest.main(verbosity=0)
