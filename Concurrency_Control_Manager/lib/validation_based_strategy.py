@@ -126,33 +126,34 @@ class ValidationBasedStrategy(ConcurrencyStrategy):
             if committed_tx_id == transaction_id:
                 continue
 
-            # Write-Read Conflict:
-            # Current transaction read something that committed transaction wrote
-            # Check: did we read objects that were modified by committed transactions?
-            write_read_conflict = tx_entry.read_set.intersection(
-                committed_entry.write_set
+            # Write-Read Conflict (Backward Validation):
+            # Check: WS(committed) ∩ RS(current) - Did we read stale data?
+            # Committed transaction wrote to objects that current transaction read
+            write_read_conflict = committed_entry.write_set.intersection(
+                tx_entry.read_set
             )
             if write_read_conflict:
                 errors.append(
-                    f"Write-Read conflict: TX {transaction_id} read objects that TX {committed_tx_id} wrote: {write_read_conflict}"
+                    f"Write-Read conflict: Committed TX {committed_tx_id} wrote objects {write_read_conflict} that TX {transaction_id} read"
                 )
                 if self.verbose:
                     print(
-                        f"  [FAIL] W-R Conflict: We read {write_read_conflict} that TX {committed_tx_id} wrote"
+                        f"  [FAIL] W-R Conflict: Committed TX {committed_tx_id} wrote {write_read_conflict} that we read"
                     )
 
-            # Write-Write Conflict:
+            # Write-Write Conflict (Backward Validation):
+            # Check: WS(committed) ∩ WS(current) - Lost update prevention
             # Both transactions wrote to same objects
-            write_write_conflict = tx_entry.write_set.intersection(
-                committed_entry.write_set
+            write_write_conflict = committed_entry.write_set.intersection(
+                tx_entry.write_set
             )
             if write_write_conflict:
                 errors.append(
-                    f"Write-Write conflict: TX {transaction_id} and committed TX {committed_tx_id} both wrote: {write_write_conflict}"
+                    f"Write-Write conflict: Both TX {committed_tx_id} and TX {transaction_id} wrote to: {write_write_conflict}"
                 )
                 if self.verbose:
                     print(
-                        f"  [FAIL] W-W Conflict with TX {committed_tx_id}: {write_write_conflict}"
+                        f"  [FAIL] W-W Conflict with committed TX {committed_tx_id}: {write_write_conflict}"
                     )
 
         # Also check with active transactions that are in validation phase
