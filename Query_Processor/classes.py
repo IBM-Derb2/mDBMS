@@ -95,7 +95,7 @@ class QueryProcessor:
             # Log error dan rollback jika ada transaction aktif
             if self.current_transaction_id is not None:
                 print(f"[QP] Rolling back transaction {self.current_transaction_id} due to error.")
-                self.cc_manager.end_transaction(self.current_transaction_id)
+                self.cc_manager.abort_transaction(self.current_transaction_id, "Error occurred")
                 self.fr_manager.write_log(error_result)
                 self.current_transaction_id = None
             
@@ -115,7 +115,7 @@ class QueryProcessor:
         if self.current_transaction_id is None:
             raise ValueError("No active transaction to commit.")
         
-        self.cc_manager.end_transaction(self.current_transaction_id)
+        self.cc_manager.commit_transaction(self.current_transaction_id)
         print(f"[QP] Handled COMMIT for TID: {self.current_transaction_id}")
         
         result = ExecutionResult(
@@ -134,7 +134,7 @@ class QueryProcessor:
             raise ValueError("No active transaction to rollback.")
         
         print(f"[QP] Handling ROLLBACK for TID: {self.current_transaction_id}")
-        self.cc_manager.end_transaction(self.current_transaction_id)
+        self.cc_manager.abort_transaction(self.current_transaction_id, "User rollback")
         
         result = ExecutionResult(
             transaction_id=self.current_transaction_id,
@@ -180,6 +180,7 @@ class QueryProcessor:
         table_name = self._extract_table_name(query)
         action = "read"
         
+        self.cc_manager.log_object(table_name, self.current_transaction_id, action)
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, action
         )
@@ -247,6 +248,7 @@ class QueryProcessor:
         query_plan = self.optimizer.optimize_query(parsed_query)
         
         table_name = self._extract_table_name(query)
+        self.cc_manager.log_object(table_name, self.current_transaction_id, "write")
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, "write"
         )
@@ -271,6 +273,7 @@ class QueryProcessor:
         query_plan = self.optimizer.optimize_query(parsed_query)
 
         table_name = self._extract_table_name(query)
+        self.cc_manager.log_object(table_name, self.current_transaction_id, "write")
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, "write"
         )
@@ -295,6 +298,7 @@ class QueryProcessor:
         query_plan = self.optimizer.optimize_query(parsed_query)
         
         table_name = self._extract_table_name(query)
+        self.cc_manager.log_object(table_name, self.current_transaction_id, "write")
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, "write"
         )
@@ -319,6 +323,7 @@ class QueryProcessor:
         query_plan = self.optimizer.optimize_query(parsed_query)
         
         table_name = self._extract_table_name(query)
+        self.cc_manager.log_object(table_name, self.current_transaction_id, "write")
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, "write"
         )
@@ -345,6 +350,7 @@ class QueryProcessor:
         query_plan = self.optimizer.optimize_query(parsed_query)
         
         table_name = self._extract_table_name(query)
+        self.cc_manager.log_object(table_name, self.current_transaction_id, "write")
         response = self.cc_manager.validate_object(
             table_name, self.current_transaction_id, "write"
         )
