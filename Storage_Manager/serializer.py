@@ -4,7 +4,7 @@ import re
 
 class Serializer:
     def __init__(self) -> None:
-        self.block_size = 1024
+        self.block_size = 1024 # 1KB
         pass
 
     def deserialize_with_blocks(self, binary_data: bytes, columns: List[dict]) -> list:

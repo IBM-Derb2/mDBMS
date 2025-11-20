@@ -4,7 +4,7 @@ import os
 from b_plus_tree_index import BPlusTreeIndex
 from hash_index import HashIndex
 from pathlib import Path
-from utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
+from Storage_Manager.utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from math import ceil
 from serializer import Serializer
 
@@ -317,7 +317,6 @@ class StorageEngine:
                     indexer.insert(val, i)
             
             indexer.save(index_filename)
-            print(f"Index Hash berhasil dibuat: {index_filename}")
 
         elif index_type == "b+ tree":
             pass
