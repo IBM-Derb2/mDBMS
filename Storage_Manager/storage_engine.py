@@ -1,12 +1,14 @@
 from __future__ import annotations
 from typing import Union, List, Dict, Tuple, Any, Optional
-import os
-from b_plus_tree_index import BPlusTreeIndex
-from hash_index import HashIndex
 from pathlib import Path
-from utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from math import ceil
-from serializer import Serializer
+
+import os
+
+from .b_plus_tree_index import BPlusTreeIndex
+from .hash_index import HashIndex
+from .utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
+from .serializer import Serializer
 
 
 class StorageEngine:
