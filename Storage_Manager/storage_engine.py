@@ -140,61 +140,58 @@ class StorageEngine:
 
         if len(rows_data) == 0:
             return Rows()
+        
+        updated_rows = Rows()
 
-        # mengambil data yang akan diubah
-        temp = Rows()
+        col_type = None
+        for j in skema["columns"]:
+            if j["name"] == data_write.column[0]:
+                col_type = j["type"]
+                break
+
+        type_mapping = {
+            "int": int,
+            "float": float,
+            "varchar": str,
+            "char": str,
+        }
+        expected_type = type_mapping.get(col_type)
+
         for i in range(len(rows_data)):
-            if isinstance(data_write.new_value, list):
-                operasi = ""
-                for j in data_write.new_value:
-                    if isinstance(j, int):
-                        operasi += str(j)
-                    else:
-                        if j in rows_data[i]:
-                            operasi += str(rows_data[i][j])
+            row = rows_data[i]
+
+            if self._matches_conditions(row, data_write.conditions):
+                if isinstance(data_write.new_value, list):
+                    operasi = ""
+                    for item in data_write.new_value:
+                        if isinstance(item, (int, float)):
+                            operasi += str(item)
                         else:
-                            operasi += str(j)
+                            operasi += str(row.get(item, item))
 
-                tempNewValue = eval(operasi)
+                    try:
+                        calc_value = eval(operasi)
+                    except Exception:
+                        continue
 
-                if (
-                    self._matches_conditions(rows_data[i], data_write.conditions)
-                    and isinstance(tempNewValue, int)
-                    and isinstance(rows_data[i][data_write.column[0]], int)
-                ):
-                    rows_data[i][data_write.column[0]] = tempNewValue
-                    temp.data.append(rows_data[i])
-                    temp.idx.append(i)
-            else:
-                for j in skema["columns"]:
-                    if j["name"] == data_write.column[0]:
-                        tipe = j["type"]
-                        break
+                    if isinstance(calc_value, expected_type):
+                        row[data_write.column[0]] = calc_value
+                else:
+                    if isinstance(data_write.new_value, expected_type):
+                        row[data_write.column[0]] = data_write.new_value
+                
+                updated_rows.data.append(row)
+                updated_rows.idx.append(i)
+        
+        updated_rows.rows_count = len(updated_rows.data)
 
-                type_mapping = {
-                    "int": int,
-                    "float": float,
-                    "varchar": str,
-                    "char": str,
-                }
+        final_data = {"columns": skema["columns"]}
+        binary_data = self.serializer.serialize_with_blocks(rows_data, final_data)
 
-                type_rill = type_mapping.get(tipe)
-
-                if self._matches_conditions(
-                    rows_data[i], data_write.conditions
-                ) and isinstance(data_write.new_value, type_rill):
-                    rows_data[i][data_write.column[0]] = data_write.new_value
-                    temp.data.append(rows_data[i])
-                    temp.idx.append(i)
-
-        temp.rows_count = len(temp.data)
-
-        tes = {"columns": skema["columns"]}
-        binary_data = self.serializer.serialize_with_blocks(temp.data, tes)
         with open(data_file, "wb") as f:
             f.write(binary_data)
 
-        return temp
+        return updated_rows
     
     def delete_block(self, data_deletion: DataDeletion) -> int:
         """
