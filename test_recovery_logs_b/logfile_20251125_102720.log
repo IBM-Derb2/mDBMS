@@ -1,0 +1,10 @@
+{"timestamp": "2025-11-25T10:27:20.464715", "type": "execution", "action": "start", "transaction_id": 401}
+{"timestamp": "2025-11-25T10:27:20.465962", "type": "execution", "action": "insert", "transaction_id": 401, "tablename": "mahasiswa", "pk_value": {"nim": "13520401"}, "record_before": null, "record_after": {"nim": "13520401", "nama": "David", "ipk": 3.7}}
+{"timestamp": "2025-11-25T10:27:20.467589", "type": "execution", "action": "start", "transaction_id": 402}
+{"timestamp": "2025-11-25T10:27:20.468399", "type": "execution", "action": "update", "transaction_id": 402, "tablename": "mahasiswa", "pk_value": {"nim": "13520402"}, "record_before": {"nim": "13520402", "nama": "Eve", "ipk": 3.2}, "record_after": {"nim": "13520402", "nama": "Eve", "ipk": 3.8}}
+{"timestamp": "2025-11-25T10:27:20.469663", "type": "execution", "action": "start", "transaction_id": 403}
+{"timestamp": "2025-11-25T10:27:20.470559", "type": "execution", "action": "delete", "transaction_id": 403, "tablename": "mahasiswa", "pk_value": {"nim": "13520403"}, "record_before": {"nim": "13520403", "nama": "Frank", "ipk": 3.5}, "record_after": null}
+{"timestamp": "2025-11-25T10:27:20.471827", "type": "execution", "action": "commit", "transaction_id": 401}
+{"timestamp": "2025-11-25T10:27:20.473094", "type": "execution", "action": "abort", "transaction_id": 402}
+{"timestamp": "2025-11-25T10:27:20.503338", "type": "execution", "action": "clr", "original_action": "delete", "transaction_id": 403, "tablename": "mahasiswa", "pk_value": {"nim": "13520403"}, "record_before": null, "record_after": {"nim": "13520403", "nama": "Frank", "ipk": 3.5}}
+{"timestamp": "2025-11-25T10:27:20.504892", "type": "execution", "action": "abort", "transaction_id": 403}

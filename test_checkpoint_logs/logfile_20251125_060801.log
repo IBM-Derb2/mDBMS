@@ -1,0 +1,9 @@
+{"timestamp": "2025-11-25T06:08:01.410284", "type": "execution", "action": "start", "transaction_id": 301}
+{"timestamp": "2025-11-25T06:08:01.411124", "type": "execution", "action": "insert", "transaction_id": 301, "tablename": "mahasiswa", "pk_value": {"nim": "301"}, "record_before": null, "record_after": {"nim": "301", "nama": "Alice"}}
+{"timestamp": "2025-11-25T06:08:01.411907", "type": "execution", "action": "start", "transaction_id": 302}
+{"timestamp": "2025-11-25T06:08:01.412708", "type": "execution", "action": "update", "transaction_id": 302, "tablename": "mahasiswa", "pk_value": {"nim": "302"}, "record_before": {"nim": "302", "nama": "Bob", "ipk": 3.5}, "record_after": {"nim": "302", "nama": "Bob", "ipk": 3.7}}
+{"timestamp": "2025-11-25T06:08:01.414090", "type": "execution", "action": "start", "transaction_id": 303}
+{"timestamp": "2025-11-25T06:08:01.414697", "type": "execution", "action": "delete", "transaction_id": 303, "tablename": "mahasiswa", "pk_value": {"nim": "303"}, "record_before": {"nim": "303", "nama": "Charlie"}, "record_after": null}
+{"timestamp": "2025-11-25T06:08:01.415916", "type": "checkpoint", "ongoing_transactions": [301, 302, 303]}
+{"timestamp": "2025-11-25T06:08:01.416974", "type": "execution", "action": "commit", "transaction_id": 301}
+{"timestamp": "2025-11-25T06:08:01.417668", "type": "execution", "action": "abort", "transaction_id": 302}

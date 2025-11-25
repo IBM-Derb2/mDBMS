@@ -1,0 +1,5 @@
+{"timestamp": "2025-11-25T05:55:45.465738", "type": "execution", "action": "start", "transaction_id": 201}
+{"timestamp": "2025-11-25T05:55:45.466519", "type": "execution", "action": "insert", "transaction_id": 201, "tablename": "mahasiswa", "pk_value": {"nim": "13520999"}, "record_before": null, "record_after": {"nim": "13520999", "nama": "Alice", "ipk": 3.5}}
+{"timestamp": "2025-11-25T05:55:45.467067", "type": "execution", "action": "update", "transaction_id": 201, "tablename": "mahasiswa", "pk_value": {"nim": "13520999"}, "record_before": {"nim": "13520999", "nama": "Alice", "ipk": 3.5}, "record_after": {"nim": "13520999", "nama": "Alice", "ipk": 3.7}}
+{"timestamp": "2025-11-25T05:55:45.467733", "type": "execution", "action": "delete", "transaction_id": 201, "tablename": "mahasiswa", "pk_value": {"nim": "13520001"}, "record_before": {"nim": "13520001", "nama": "Budi", "ipk": 3.8}, "record_after": null}
+{"timestamp": "2025-11-25T05:55:45.468508", "type": "execution", "action": "abort", "transaction_id": 201}
