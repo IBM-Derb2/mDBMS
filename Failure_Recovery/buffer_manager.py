@@ -128,3 +128,10 @@ class BufferManager:
             print(f"[Buffer Manager] Flush selesai: {dirty_count} blok kotor ditulis ke disk.")
         else:
             print(f"[Buffer Manager] Flush: Tidak ada blok kotor yang perlu ditulis.")
+        
+        self.clear_buffer()
+    
+    def clear_buffer(self):
+        self.buffer_data.clear()
+        self.lru_order.clear()
+        print(f"[Buffer Manager] Buffer dikosongkan.")
