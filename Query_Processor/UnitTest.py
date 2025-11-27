@@ -1,6 +1,7 @@
 import sys
 import os
 import unittest
+import shutil
 from unittest.mock import Mock, MagicMock
 from datetime import datetime
 
@@ -8,9 +9,14 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 from Query_Processor.classes import QueryProcessor, ExecutionResult, Rows
-from Query_Optimizer.types import ParsedQuery, QueryTree
+from globalsy.classes.query_tree import QueryTree
+from globalsy.classes.parsed_query import ParsedQuery
+from globalsy.constants.query_types import QueryTypes
+from globalsy.constants.query_operators import QueryOperators
 from Concurrency_Control_Manager.lib.strategy_interface import Response
 from Storage_Manager.utils import Rows as StorageRows, Condition
+from Storage_Manager.storage_engine import StorageEngine
+from Storage_Manager.serializer import Serializer
 
 class TestQueryProcessorComprehensive(unittest.TestCase) :
 
@@ -26,9 +32,13 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         self.mock_ccm.validate_object.return_value = Response(allowed=True, transaction_id=1)
         
         def mock_parse_query(query):
+            """
+            Membuat Query Tree VALID sesuai query_types.py
+            Struktur: SELECT -> [COLUMNS, FROM, WHERE?]
+            """
             query_upper = query.upper().strip()
             
-            if "SELECT" in query_upper and "FROM" in query_upper:
+            if "SELECT" in query_upper:
                 table_name = "users"
                 if "FROM" in query_upper:
                     parts = query_upper.split("FROM")
@@ -37,48 +47,49 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
                         if table_parts:
                             table_name = table_parts[0].lower().rstrip(";")
                 
-                relation_node = QueryTree(type="RELATION", val=table_name, childs=[], parent=None)
+                table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
+                from_node = QueryTree(type=QueryTypes.FROM, val="", childs=[table_node])
+                
+                col_node = QueryTree(type=QueryTypes.COLUMN, val="*")
+                columns_node = QueryTree(type=QueryTypes.COLUMNS, val="*", childs=[col_node])
+                
+                children = [columns_node, from_node]
                 
                 if "WHERE" in query_upper:
-                    selection_node = QueryTree(type="SELECTION", val="id = 1", childs=[], parent=None)
-                    selection_stmt = QueryTree(type="SELECTION_STMT", val="", childs=[relation_node, selection_node], parent=None)
-                    projection_node = QueryTree(type="PROJECTION", val=["*"], childs=[selection_stmt], parent=None)
-                else:
-                    projection_node = QueryTree(type="PROJECTION", val=["*"], childs=[relation_node], parent=None)
+                    cond_val = "id = 1"
+                    cond_node = QueryTree(type=QueryTypes.CONDITION, val=cond_val)
+                    where_node = QueryTree(type=QueryTypes.WHERE, val="", childs=[cond_node])
+                    children.append(where_node)
                 
-                return ParsedQuery(query_tree=projection_node, query=query)
-            
-            elif "JOIN" in query_upper:
-                # JOIN query tree
-                left_relation = QueryTree(type="RELATION", val="users", childs=[], parent=None)
-                right_relation = QueryTree(type="RELATION", val="orders", childs=[], parent=None)
-                join_node = QueryTree(type="JOIN", val=["users.id", "orders.user_id"], childs=[left_relation, right_relation], parent=None)
-                projection_node = QueryTree(type="PROJECTION", val=["*"], childs=[join_node], parent=None)
-                return ParsedQuery(query_tree=projection_node, query=query)
+                if "JOIN" in query_upper:
+                     left = QueryTree(type=QueryTypes.TABLE, val="users")
+                     right = QueryTree(type=QueryTypes.TABLE, val="orders")
+                     join_node = QueryTree(type=QueryTypes.JOIN, val=["users.id", "orders.user_id"], childs=[left, right])
+                     return ParsedQuery(query_tree=join_node, query=query)
+
+                select_node = QueryTree(type=QueryTypes.SELECT, val="", childs=children)
+                return ParsedQuery(query_tree=select_node, query=query)
             
             elif "UPDATE" in query_upper:
-                # UPDATE query tree
-                relation_node = QueryTree(type="RELATION", val="users", childs=[], parent=None)
-                update_node = QueryTree(type="UPDATE", val="name=NewName", childs=[relation_node], parent=None)
+                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
+                update_node = QueryTree(type=QueryTypes.UPDATE, val="name=NewName", childs=[table_node])
                 return ParsedQuery(query_tree=update_node, query=query)
             
             elif "INSERT" in query_upper:
-                # INSERT query tree
-                relation_node = QueryTree(type="RELATION", val="users", childs=[], parent=None)
-                insert_node = QueryTree(type="INSERT", val={"columns": ["name"], "values": ["Alice"]}, childs=[relation_node], parent=None)
+                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
+                insert_node = QueryTree(type=QueryTypes.INSERT, val={"columns": ["name"], "values": ["Alice"]}, childs=[table_node])
                 return ParsedQuery(query_tree=insert_node, query=query)
             
             elif "DELETE" in query_upper:
-                # DELETE query tree
-                relation_node = QueryTree(type="RELATION", val="users", childs=[], parent=None)
-                delete_node = QueryTree(type="DELETE", val="", childs=[relation_node], parent=None)
+                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
+                delete_node = QueryTree(type=QueryTypes.DELETE, val="", childs=[table_node])
                 return ParsedQuery(query_tree=delete_node, query=query)
             
             else:
-                relation_node = QueryTree(type="RELATION", val="users", childs=[], parent=None)
-                return ParsedQuery(query_tree=relation_node, query=query)
+                return ParsedQuery(query_tree=QueryTree(type=QueryTypes.TABLE, val="users"), query=query)
         
         self.mock_optimizer.parse_query.side_effect = mock_parse_query
+        self.mock_optimizer.optimize_query.side_effect = lambda x: x
         
         self.mock_storage.read_block.return_value = StorageRows(
             data=[
@@ -591,6 +602,55 @@ class TestQueryProcessorComprehensive(unittest.TestCase) :
         
         print("\n✓ Test 37: All required methods exist")
 
+    def test_38_real_data_join_bug_verification(self):
+            """
+            [REAL DATA TEST with VALID QUERY TREE TYPES]
+            """
+            data_test_dir = "data_test_join_v2"
+            if os.path.exists(f"data/{data_test_dir}"):
+                shutil.rmtree(f"data/{data_test_dir}")
+            
+            serializer = Serializer()
+            real_storage = StorageEngine(data_dir=data_test_dir, serializer=serializer)
+            
+            schema_users = {"table_name": "users", "columns": [{"name": "id", "type": "int"}, {"name": "name", "type": "varchar", "length": 20}]}
+            real_storage.write_schema_file(schema_users)
+            real_storage.write_data_file("users", [{"id": 1, "name": "Budi"}], schema_users)
+            
+            schema_orders = {"table_name": "orders", "columns": [{"name": "id", "type": "int"}, {"name": "user_id", "type": "int"}, {"name": "amount", "type": "int"}]}
+            real_storage.write_schema_file(schema_orders)
+            real_storage.write_data_file("orders", [{"id": 101, "user_id": 1, "amount": 5000}], schema_orders)
+
+            qp_real = QueryProcessor(self.mock_optimizer, real_storage, self.mock_ccm, self.mock_frm)
+            
+            users_node = QueryTree(type=QueryTypes.TABLE, val="users")
+            orders_node = QueryTree(type=QueryTypes.TABLE, val="orders")
+            join_node = QueryTree(type=QueryTypes.JOIN, val=["users.id", "orders.user_id"], childs=[users_node, orders_node])
+            
+            qp_real.current_transaction_id = 1
+            result = qp_real._process_node(join_node)
+            
+            print("\n\n--- [TEST 38] ANALISIS HASIL JOIN REAL DATA ---")
+            if result.rows_count > 0:
+                row = result.data[0]
+                print(f"Data Row: {row}")
+                ids_found = []
+                for k, v in row.items():
+                    if "id" in k.lower() or v in [1, 101]:
+                        ids_found.append(v)
+                
+                try:
+                    self.assertIn(101, ids_found, "BUG: Order ID (101) hilang!")
+                    self.assertIn(1, ids_found, "BUG: User ID (1) hilang!")
+                    print("PASS: Bug Fixed (Kolom collision tertangani).")
+                except AssertionError as e:
+                    print(f"✗ FAIL: {e}")
+                    raise e
+            else:
+                self.fail("Join tidak menghasilkan data.")
+                
+            if os.path.exists(f"data/{data_test_dir}"):
+                shutil.rmtree(f"data/{data_test_dir}")
 
 if __name__ == "__main__":
     print("\n" + "="*70)
