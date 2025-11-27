@@ -39,7 +39,7 @@ class FailureRecoveryManager:
         self.wal_parser = LogParser(log_directory)
         
         # Recovery engine for undo operations
-        self.recovery_engine = RecoveryEngine(log_directory, buffer_manager, storage_engine)
+        self.recovery_engine = RecoveryEngine(log_directory, buffer_manager)
         
         # Track active transactions
         self.active_transactions: Set[int] = set()

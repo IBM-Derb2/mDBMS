@@ -135,3 +135,49 @@ class BufferManager:
         self.buffer_data.clear()
         self.lru_order.clear()
         print(f"[Buffer Manager] Buffer dikosongkan.")
+        
+    def write_to_buffer_for_recovery(self, table_name: str, pk_value: Dict[str, Any], new_data: dict) -> None:
+        key = self._get_buffer_key(table_name, pk_value)
+        pk_str = " | ".join([f"{k}:{v}" for k, v in pk_value.items()])
+        
+        if key in self.buffer_data:
+            row = self.buffer_data[key]
+            row.data = new_data
+            row.is_dirty = True
+            self._update_lru(key)
+            print(f"[Buffer Recovery] Updated {table_name} [{pk_str}] in buffer")
+        else:
+            try:
+                disk_data = self.storage_engine.fetch_block_from_disk(table_name, pk_value)
+                if disk_data:
+                    row = BufferedRow(table_name, pk_value, new_data, is_dirty=True)
+                    self._add_to_buffer(row, key)
+                    print(f"[Buffer Recovery] Loaded and updated {table_name} [{pk_str}]")
+                else:
+                    row = BufferedRow(table_name, pk_value, new_data, is_dirty=True)
+                    self._add_to_buffer(row, key)
+                    print(f"[Buffer Recovery] Inserted new {table_name} [{pk_str}]")
+            except Exception as e:
+                row = BufferedRow(table_name, pk_value, new_data, is_dirty=True)
+                self._add_to_buffer(row, key)
+                print(f"[Buffer Recovery] Inserted new {table_name} [{pk_str}] (disk read failed)")
+    
+    def delete_from_buffer_for_recovery(self, table_name: str, pk_value: Dict[str, Any]) -> None:
+        key = self._get_buffer_key(table_name, pk_value)
+        pk_str = " | ".join([f"{k}:{v}" for k, v in pk_value.items()])
+        
+        if key in self.buffer_data:
+            self.buffer_data.pop(key)
+            self.lru_order.remove(key)
+            print(f"[Buffer Recovery] Deleted {table_name} [{pk_str}] from buffer")
+        else:
+            try:
+                disk_data = self.storage_engine.fetch_block_from_disk(table_name, pk_value)
+                if disk_data:
+                    row = BufferedRow(table_name, pk_value, None, is_dirty=True)
+                    self._add_to_buffer(row, key)
+                    print(f"[Buffer Recovery] Marked {table_name} [{pk_str}] for deletion")
+                else:
+                    print(f"[Buffer Recovery] {table_name} [{pk_str}] not found (already deleted)")
+            except Exception as e:
+                print(f"[Buffer Recovery] Warning: Could not delete {table_name} [{pk_str}]: {e}")

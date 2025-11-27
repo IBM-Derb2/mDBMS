@@ -6,15 +6,12 @@ from log_writer import LogWriter
 from recovery_model import RecoverCriteria, LogEntry
 from log_parser import LogParser
 from buffer_manager import BufferManager
-from Storage_Manager.utils import DataWrite, DataDeletion, Condition
-from Storage_Manager.storage_engine import StorageEngine
 
 class RecoveryEngine:
-    def __init__(self, log_directory: str = "test_logs", buffer_manager: BufferManager = None, storage_engine: StorageEngine = None):
+    def __init__(self, log_directory: str = "test_logs", buffer_manager: BufferManager = None):
         self.log_parser = LogParser(log_directory=log_directory)
         self.log_writer = LogWriter(log_directory=log_directory)
         self.buffer_manager = buffer_manager
-        self.storage_engine = storage_engine
 
     def recover(self) -> Dict[str, Any]:
         print("\n[Recovery] ===== RECOVERY START =====")
@@ -73,6 +70,12 @@ class RecoveryEngine:
                 undo_list.remove(tx_id)
         
         print(f"[Recovery] UNDO complete: {undo_count} operations rolled back")
+        
+        print("\n[Recovery] ===== FLUSHING RECOVERED DATA =====")
+        if self.buffer_manager:
+            self.buffer_manager.flush_dirty_blocks()
+            print("[Recovery] All recovered data flushed to disk")
+        
         print("[Recovery] ===== RECOVERY COMPLETE =====\n")
         
         return {
@@ -103,10 +106,14 @@ class RecoveryEngine:
             self._apply_undo(entry)
             self._write_compensation_log(entry)
         
+        # Flush rolled back changes
+        if self.buffer_manager:
+            self.buffer_manager.flush_dirty_blocks()
+        
         print(f"[Recovery] Rollback completed for TX {tx_id}\n")
 
     def _log_abort_for_incomplete_transaction(self, tx_id: int) -> None:
-        """NEW: Log ABORT for incomplete transactions found during recovery"""
+        """Write ABORT entry for incomplete transactions found during recovery"""
         abort_entry = {
             "timestamp": datetime.now().isoformat(),
             "type": WalType.EXECUTION.value,
@@ -157,12 +164,16 @@ class RecoveryEngine:
         
     def _apply_redo(self, entry: LogEntry) -> None:
         """
-        Re-apply a write operation to ensure it's on disk.
+        Re-apply a write operation by writing to buffer.
+        
+        REDO always uses new_data (after-image).
+        All writes go to buffer, will be flushed at end of recovery.
         
         Args:
             entry: LogEntry with write operation details
         """
-        if not self.storage_engine or not entry.table_name:
+        if not self.buffer_manager or not entry.table_name:
+            print(f"    [Warning] Buffer manager not available, skipping REDO")
             return
             
         action = entry.action
@@ -170,32 +181,26 @@ class RecoveryEngine:
         pk = entry.pk_value
         new_data = entry.new_data
 
-        # REDO always uses new_data (after-image)
-        if action == "insert" and new_data:
-            conditions = [Condition(k, "=", v) for k, v in pk.items()] if pk else []
-            columns = list(new_data.keys())
-            values = list(new_data.values())
-            data_write = DataWrite(table, columns, conditions, values)
-            self.storage_engine.write_block(data_write)
-        elif action == "update" and new_data and pk:
-            conditions = [Condition(k, "=", v) for k, v in pk.items()]
-            columns = list(new_data.keys())
-            values = list(new_data.values())
-            data_write = DataWrite(table, columns, conditions, values)
-            self.storage_engine.write_block(data_write)
-        elif action == "delete" and pk:
-            conditions = [Condition(k, "=", v) for k, v in pk.items()]
-            data_deletion = DataDeletion(table, conditions)
-            self.storage_engine.delete_block(data_deletion)
+        try:
+            if action == "insert" and new_data:
+                self.buffer_manager.write_to_buffer_for_recovery(table, pk, new_data)
+            elif action == "update" and new_data and pk:
+                self.buffer_manager.write_to_buffer_for_recovery(table, pk, new_data)
+            elif action == "delete" and pk:
+                self.buffer_manager.delete_from_buffer_for_recovery(table, pk)
+        except Exception as e:
+            print(f"    [Error] REDO failed: {e}")
 
     def _apply_undo(self, entry: LogEntry) -> None:
         """
-        Apply undo for a single write operation using idempotent blind undo strategy.
+        Apply undo for a single write operation by writing to buffer.
         
         Undo operations:
         - INSERT: Delete the inserted record
-        - UPDATE: Restore old values
+        - UPDATE: Restore old values  
         - DELETE: Re-insert the deleted record
+        
+        All operations write to buffer, will be flushed at end of recovery.
         
         Args:
             entry: LogEntry containing operation details to undo
@@ -207,108 +212,22 @@ class RecoveryEngine:
 
         print(f"  [Recovery] Undoing {action.upper()} on {table} (pk={pk})")
 
-        has_storage = (
-            self.storage_engine is not None and 
-            hasattr(self.storage_engine, 'write_block') and 
-            hasattr(self.storage_engine, 'delete_block')
-        )
-
-        if not has_storage:
-            print(f"    [Warning] Storage engine not available, skipping undo")
+        if not self.buffer_manager:
+            print(f"    [Warning] Buffer manager not available, skipping undo")
             return
 
         try:
             if action == "insert":
-                self._undo_insert(table, pk)
+                self.buffer_manager.delete_from_buffer_for_recovery(table, pk)
             elif action == "update" and old_data and pk:
-                self._undo_update(table, pk, old_data)
+                self.buffer_manager.write_to_buffer_for_recovery(table, pk, old_data)
             elif action == "delete" and old_data:
-                self._undo_delete(table, pk, old_data)
+                self.buffer_manager.write_to_buffer_for_recovery(table, pk, old_data)
         except Exception as e:
             print(f"    [Error] Undo failed: {e}")
             import traceback
             traceback.print_exc()
 
-    def _undo_insert(self, table: str, pk: dict) -> None:
-        """Undo INSERT by deleting the record"""
-        from Storage_Manager.utils import DataDeletion, Condition
-        
-        print(f"    -> DELETE FROM {table} WHERE pk={pk}")
-        conditions = [Condition(k, "=", v) for k, v in pk.items()]
-        data_deletion = DataDeletion(table, conditions)
-        deleted_count = self.storage_engine.delete_block(data_deletion)
-        print(f"    [OK] Deleted {deleted_count} record(s)")
-
-    def _undo_update(self, table: str, pk: dict, old_data: dict) -> None:
-        """Undo UPDATE by restoring old values"""
-        from Storage_Manager.utils import DataWrite, Condition
-        
-        print(f"    -> UPDATE {table} SET {old_data} WHERE pk={pk}")
-        conditions = [Condition(k, "=", v) for k, v in pk.items()]
-        pk_columns = set(pk.keys())
-        
-        for col_name, col_value in old_data.items():
-            if col_name not in pk_columns:
-                data_write = DataWrite(
-                    table=table,
-                    column=[col_name],
-                    conditions=conditions,
-                    new_value=col_value
-                )
-                self.storage_engine.write_block(data_write)
-                print(f"    [OK] Restored {col_name} = {col_value}")
-
-    def _undo_delete(self, table: str, pk: dict, old_data: dict) -> None:
-        """Undo DELETE by re-inserting the record"""
-        from Storage_Manager.utils import DataWrite, DataRetrieval, Condition
-        
-        print(f"    -> INSERT {old_data} INTO {table}")
-        pk_columns = set(pk.keys()) if pk else set()
-        
-        for pk_col in pk_columns:
-            if pk_col not in old_data:
-                continue
-                
-            pk_value = old_data[pk_col]
-            
-            check_retrieval = DataRetrieval(
-                table=table,
-                column=["*"],
-                conditions=[Condition(pk_col, "=", pk_value)],
-                search_type="sequential"
-            )
-            existing = self.storage_engine.read_block(check_retrieval)
-            
-            if existing.rows_count > 0:
-                print(f"    [Warning] Row with {pk_col}={pk_value} already exists")
-                break
-            
-            data_write = DataWrite(
-                table=table,
-                column=[pk_col],
-                conditions=[],
-                new_value=pk_value
-            )
-            result = self.storage_engine.write_block(data_write)
-            print(f"    [OK] Inserted PK {pk_col} (affected: {result.rows_count} rows)")
-        
-        conditions = [Condition(k, "=", v) for k, v in pk.items()] if pk else []
-        for col_name, col_value in old_data.items():
-            if col_name not in pk_columns:
-                data_write = DataWrite(
-                    table=table,
-                    column=[col_name],
-                    conditions=conditions,
-                    new_value=col_value
-                )
-                result = self.storage_engine.write_block(data_write)
-                
-                if result.rows_count > 0:
-                    print(f"    [OK] Set {col_name} = {col_value}")
-                else:
-                    print(f"    [Warning] Failed to set {col_name}")
-        
-        print(f"    [OK] Re-inserted record into {table}")
     
     def _find_last_checkpoint(self):
         """Returns (found, checkpoint_data, entries_after_checkpoint)"""
