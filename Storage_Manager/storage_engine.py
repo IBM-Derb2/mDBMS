@@ -9,6 +9,7 @@ from .b_plus_tree_index import BPlusTreeIndex
 from .hash_index import HashIndex
 from .utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from .serializer import Serializer
+from .classes import Table
 
 
 class StorageEngine:
@@ -332,22 +333,25 @@ class StorageEngine:
         with open(data_file, "rb") as f:
             rows_data = self.serializer.deserialize_with_blocks(f.read(), schema["columns"])
 
-        if index_type == "hash" or index_type == "Hash":
-            indexer = HashIndex()
-            index_filename = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{column}_hash.dat"
-            
-            # Populate Index: Mapping Nilai -> List Index Baris
-            for i, row in enumerate(rows_data):
-                val = row.get(column)
-                if val is not None:
-                    indexer.insert(val, i)
-            
-            indexer.save(index_filename)
+        indexer = None
+        index_filename = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{column}_"
 
-        elif index_type == "b+ tree":
-            pass
+        if index_type.lower() == "hash":
+            indexer = HashIndex()
+            index_filename += "hash.dat"
+        elif index_type.lower() == "b+ tree":
+            indexer = BPlusTreeIndex()
+            index_filename += "btree.dat"
+        else:
+            return None
+            
+        # Populate Index: Mapping Nilai -> List Index Baris
+        for i, row in enumerate(rows_data):
+            val = row.get(column)
+            if val is not None:
+                indexer.insert(val, i)
         
-        return None
+        indexer.save(index_filename)
 
     def get_stats(self, table: str) -> Statistic:
         """
@@ -450,3 +454,47 @@ class StorageEngine:
         indexer = HashIndex()
         indexer.load(index_path)
         return indexer.search(search_key)
+
+    def save_buffer_to_disk(self, buffer):
+        for table in buffer.tables:
+            table_name = table.name.lower()
+
+            schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+            data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+            # read schema
+            with open(schema_path, "rb") as f:
+                schema_bin = f.read()
+            schema = self.serializer.deserialize_schema(schema_bin)
+            columns = schema["columns"]
+
+            # serialize
+            binary_data = self.serializer.serialize_with_blocks(
+                table.data, columns
+            )
+
+            # write
+            with open(data_path, "wb") as f:
+                f.write(binary_data)
+
+        buffer.tables.clear()
+
+    def read_disk_to_buffer(self, table_name):
+        table_name = table_name.lower()
+
+        schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+        data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+        # load schema
+        with open(schema_path, "rb") as f:
+            schema_bin = f.read()
+        schema = self.serializer.deserialize_schema(schema_bin)
+        columns = schema["columns"]
+
+        # load data
+        with open(data_path, "rb") as f:
+            data_bin = f.read()
+
+        rows = self.serializer.deserialize_with_blocks(data_bin, columns)
+
+        return Table(table_name, rows)

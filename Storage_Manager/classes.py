@@ -2,10 +2,14 @@ from dataclasses import dataclass, field
 from typing import List, Any
 
 @dataclass
+class Table:
+    name: str
+    data: List[dict] = field(default_factory=list)
+
+@dataclass
 class Rows:
     data: List[dict] = field(default_factory=list)
 
-# 
 class StorageEngine:
     
     def read_block(self, data_retrieval: Any) -> Rows:
