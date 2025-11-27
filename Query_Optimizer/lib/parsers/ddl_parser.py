@@ -5,7 +5,6 @@ Handles parsing of DDL statements: CREATE, DROP, and transaction commands.
 
 from globalsy.classes.query_tree import QueryTree
 from globalsy.constants.query_types import QueryTypes
-from globalsy.constants.query_operators import QueryOperators
 from .base_parser import BaseParser
 
 
@@ -34,8 +33,8 @@ class DDLParser(BaseParser):
         return QueryTree(type=QueryTypes.CREATE_TABLE, val=QueryTypes.CREATE_TABLE, childs=[table_node, columns_node])
 
     def _parse_foreign_key_constraint(self) -> QueryTree:
-        self._expect_keyword(QueryTypes.FOREIGN)
-        self._expect_keyword(QueryTypes.KEY)
+        self._expect_keyword('FOREIGN')
+        self._expect_keyword('KEY')
 
         self._expect_punctuation('(')
 
@@ -43,7 +42,7 @@ class DDLParser(BaseParser):
         self._advance()
         self._expect_punctuation(')')
 
-        self._expect_keyword(QueryTypes.REFERENCES)
+        self._expect_keyword('REFERENCES')
 
         ref_table = self.current_token.value
         self._advance()
@@ -54,10 +53,12 @@ class DDLParser(BaseParser):
         self._expect_punctuation(')')
 
         # Buat node khusus untuk Foreign Key
-        fk_node = QueryTree(type=QueryTypes.FOREIGN_KEY_CONSTRAINT, val=local_col)
+        fk_node = QueryTree(
+            type=QueryTypes.FOREIGN_KEY_CONSTRAINT, val=local_col)
         fk_node.childs.append(
             QueryTree(type=QueryTypes.REFERENCES_TABLE, val=ref_table))
-        fk_node.childs.append(QueryTree(type=QueryTypes.REFERENCES_COLUMN, val=ref_col))
+        fk_node.childs.append(
+            QueryTree(type=QueryTypes.REFERENCES_COLUMN, val=ref_col))
 
         return fk_node
 
@@ -66,8 +67,8 @@ class DDLParser(BaseParser):
         Mem-parsing: PRIMARY KEY (col1, col2, ...)
         Kita asumsikan token 'PRIMARY' sudah di-match.
         """
-        self._expect_keyword(QueryTypes.PRIMARY)
-        self._expect_keyword(QueryTypes.KEY)
+        self._expect_keyword('PRIMARY')
+        self._expect_keyword('KEY')
 
         self._expect_punctuation('(')
 
@@ -87,24 +88,24 @@ class DDLParser(BaseParser):
 
         self._expect_punctuation(')')
 
-        return QueryTree(type=QueryTypes.PRIMARY_KEY_CONSTRAINT, val=QueryTypes.TABLE_PK, childs=pk_cols)
+        return QueryTree(type=QueryTypes.PRIMARY_KEY_CONSTRAINT, val='TABLE_PK', childs=pk_cols)
 
     def _parse_column_definitions(self) -> QueryTree:
         """Parse column definitions in CREATE TABLE"""
         columns = []
 
         while True:
-            if self._match_keyword(QueryTypes.FOREIGN):
+            if self._match_keyword('FOREIGN'):
                 # Jika token-nya 'FOREIGN', panggil parser khusus FK
                 fk_node = self._parse_foreign_key_constraint()
                 columns.append(fk_node)
 
-            elif self._match_keyword(QueryTypes.PRIMARY):
+            elif self._match_keyword('PRIMARY'):
                 # Jika token-nya 'PRIMARY', panggil parser khusus PK
                 pk_node = self._parse_table_primary_key()
                 columns.append(pk_node)
 
-            elif self._match_keyword(QueryTypes.CONSTRAINT):
+            elif self._match_keyword('CONSTRAINT'):
                 raise NotImplementedError(
                     "Parsing 'CONSTRAINT' belum didukung")
 
@@ -112,8 +113,8 @@ class DDLParser(BaseParser):
                 col_name = self.current_token.value
                 self._advance()
 
-                if not self._match_keyword(QueryTypes.INT) and not self._match_keyword(QueryTypes.FLOAT) and \
-                   not self._match_keyword(QueryTypes.CHAR):
+                if not self._match_keyword('INT') and not self._match_keyword('FLOAT') and \
+                   not self._match_keyword('CHAR'):
 
                     raise ValueError(
                         f"Expected data type (INT, FLOAT, or CHAR) after column '{col_name}', got '{self.current_token.value}'")
@@ -132,21 +133,21 @@ class DDLParser(BaseParser):
                     self._expect_punctuation(')')
 
                 constraints = []
-                while self._match_keyword(QueryTypes.PRIMARY) or self._match_keyword(QueryTypes.UNIQUE) or self._match_keyword(QueryOperators.NOT):
-                    if self._match_keyword(QueryTypes.PRIMARY):
+                while self._match_keyword('PRIMARY') or self._match_keyword('UNIQUE') or self._match_keyword('NOT'):
+                    if self._match_keyword('PRIMARY'):
                         self._advance()
-                        self._expect_keyword(QueryTypes.KEY)
+                        self._expect_keyword('KEY')
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val=QueryTypes.PRIMARY_KEY))
-                    elif self._match_keyword(QueryTypes.UNIQUE):
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='PRIMARY_KEY'))
+                    elif self._match_keyword('UNIQUE'):
                         self._advance()
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val=QueryTypes.UNIQUE))
-                    elif self._match_keyword(QueryOperators.NOT):
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='UNIQUE'))
+                    elif self._match_keyword('NOT'):
                         self._advance()
-                        self._expect_keyword(QueryTypes.NULL)
+                        self._expect_keyword('NULL')
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val=QueryTypes.NOT_NULL))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='NOT_NULL'))
 
                 # Buat node
                 type_val = data_type if not size else f"{data_type}({size})"
@@ -186,12 +187,12 @@ class DDLParser(BaseParser):
 
         # Check for CASCADE or RESTRICT
         mode = None
-        if self._match_keyword(QueryTypes.CASCADE):
+        if self._match_keyword('CASCADE'):
             self._advance()
-            mode = QueryTree(type=QueryTypes.DROP_MODE, val=QueryTypes.CASCADE)
-        elif self._match_keyword(QueryTypes.RESTRICT):
+            mode = QueryTree(type=QueryTypes.DROP_MODE, val='CASCADE')
+        elif self._match_keyword('RESTRICT'):
             self._advance()
-            mode = QueryTree(type=QueryTypes.DROP_MODE, val=QueryTypes.RESTRICT)
+            mode = QueryTree(type=QueryTypes.DROP_MODE, val='RESTRICT')
 
         childs = [table_node]
         if mode:
@@ -201,10 +202,10 @@ class DDLParser(BaseParser):
 
     def parse_begin_transaction(self) -> QueryTree:
         """Parse BEGIN TRANSACTION"""
-        self._expect_keyword(QueryTypes.BEGIN)
+        self._expect_keyword('BEGIN')
 
         # TRANSACTION keyword is optional
-        if self._match_keyword(QueryTypes.TRANSACTION):
+        if self._match_keyword('TRANSACTION'):
             self._advance()
 
         return QueryTree(type=QueryTypes.BEGIN_TRANSACTION, val=QueryTypes.BEGIN_TRANSACTION)

@@ -90,7 +90,7 @@ class QueryParsers(BaseParser):
                 self.current_token = self.expr_parser.current_token
 
                 # Check for AS alias
-                if self._match_keyword(QueryTypes.AS):
+                if self._match_keyword('AS'):
                     self._advance()
                     if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
                         bad = self.current_token.value if self.current_token else 'EOF'
@@ -123,8 +123,8 @@ class QueryParsers(BaseParser):
             if self._match_punctuation(','):
                 self._advance()
                 tables.append(self._parse_table_reference())
-            elif self._match_keyword(QueryTypes.JOIN) or self._match_keyword(QueryTypes.INNER) or \
-                    self._match_keyword(QueryTypes.NATURAL):
+            elif self._match_keyword('JOIN') or self._match_keyword('INNER') or \
+                    self._match_keyword('NATURAL'):
                 tables.append(self._parse_join())
             elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
                     self.current_token.value.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
@@ -159,7 +159,7 @@ class QueryParsers(BaseParser):
         table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Check for AS alias
-        if self._match_keyword(QueryTypes.AS):
+        if self._match_keyword('AS'):
             self._advance()
             if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
                 bad = self.current_token.value if self.current_token else 'EOF'
@@ -170,11 +170,11 @@ class QueryParsers(BaseParser):
             return QueryTree(type=QueryTypes.ALIAS, val=alias, childs=[table_node])
         # Check for implicit alias (no AS keyword)
         elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
-                not self._match_keyword(QueryTypes.WHERE) and \
-                not self._match_keyword(QueryTypes.JOIN) and \
+                not self._match_keyword('WHERE') and \
+                not self._match_keyword('JOIN') and \
                 not self._match_punctuation(',') and \
-                not self._match_keyword(QueryTypes.ORDER) and \
-                not self._match_keyword(QueryTypes.LIMIT):
+                not self._match_keyword('ORDER') and \
+                not self._match_keyword('LIMIT'):
             alias = self.current_token.value
             # Reject unsupported JOIN keywords used as aliases
             if alias.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
@@ -190,11 +190,11 @@ class QueryParsers(BaseParser):
         start_pos = self.position
 
         # Check for NATURAL JOIN
-        if self._match_keyword(QueryTypes.NATURAL):
+        if self._match_keyword('NATURAL'):
             self._advance()
             join_type = 'NATURAL'
         # Check for explicit INNER keyword (optional)
-        elif self._match_keyword(QueryTypes.INNER):
+        elif self._match_keyword('INNER'):
             self._advance()
             join_type = 'INNER'
 
@@ -224,7 +224,7 @@ class QueryParsers(BaseParser):
 
     def _parse_where_clause(self) -> QueryTree:
         """Parse WHERE clause"""
-        self._expect_keyword('WHERE')
+        self._expect_keyword(QueryTypes.WHERE)
         self._sync_expression_parser()
         condition = self.expr_parser.parse_expression()
         self.position = self.expr_parser.position
@@ -276,7 +276,7 @@ class QueryParsers(BaseParser):
 
     def _parse_limit_clause(self) -> QueryTree:
         """Parse LIMIT clause"""
-        self._expect_keyword('LIMIT')
+        self._expect_keyword(QueryTypes.LIMIT)
         if not self.current_token or self.current_token.type != 'NUMBER':
             bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
@@ -304,7 +304,7 @@ class QueryParsers(BaseParser):
 
         # Parse WHERE clause
         where_node = None
-        if self._match_keyword('WHERE'):
+        if self._match_keyword(QueryTypes.WHERE):
             where_node = self._parse_where_clause()
 
         childs = [table_node, set_node]
@@ -366,7 +366,7 @@ class QueryParsers(BaseParser):
 
         # Parse WHERE clause
         where_node = None
-        if self._match_keyword('WHERE'):
+        if self._match_keyword(QueryTypes.WHERE):
             where_node = self._parse_where_clause()
 
         childs = [table_node]

@@ -7,12 +7,12 @@ from typing import List, Optional
 import logging
 from globalsy.classes.parsed_query import ParsedQuery
 from globalsy.classes.query_tree import QueryTree
-from globalsy.constants.query_types import QueryTypes
 from .helpers.tokenizer import SQLToken, SQLTokenizer
 from .parsers.base_parser import BaseParser
 from .parsers.expression_parser import ExpressionParser
 from .parsers.query_parsers import QueryParsers
 from .parsers.ddl_parser import DDLParser
+from globalsy.constants.query_types import QueryTypes
 
 
 class SQLParser(BaseParser):
@@ -52,7 +52,7 @@ class SQLParser(BaseParser):
         elif self._match_keyword(QueryTypes.DROP):
             tree = self.ddl_parser.parse_drop()
             self._update_from_ddl_parser()
-        elif self._match_keyword(QueryTypes.BEGIN):
+        elif self._match_keyword('BEGIN'):
             tree = self.ddl_parser.parse_begin_transaction()
             self._update_from_ddl_parser()
         elif self._match_keyword(QueryTypes.COMMIT):
