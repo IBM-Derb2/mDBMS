@@ -20,6 +20,10 @@ class TransactionCoordinator:
         if hasattr(strategy, "set_deadlock_callback"):
             strategy.set_deadlock_callback(self._on_potential_deadlock)
 
+        # NEW: Set abort callback for wound-wait mechanism
+        if hasattr(strategy, "set_abort_callback"):
+            strategy.set_abort_callback(self._auto_abort)
+
     def set_deadlock_detector(self, detector):
         """Set the deadlock detector instance."""
         self.deadlock_detector = detector
@@ -27,16 +31,15 @@ class TransactionCoordinator:
     def _on_potential_deadlock(self):
         """Callback triggered when a transaction enters wait state."""
         if self.deadlock_detector:
-            self.deadlock_detector.check_and_resolve(
-                lambda tx_id, reason: self._auto_abort(tx_id, reason)
-            )
+            self.deadlock_detector.check_and_resolve(self._auto_abort)
 
     def _auto_abort(self, transaction_id: int, reason: str):
         """Internal abort method for deadlock resolution."""
         try:
+            print(f"[AutoAbort] Aborting TX {transaction_id}: {reason}")
             self.abort(transaction_id, reason)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[AutoAbort] Error aborting TX {transaction_id}: {e}")
 
     def execute_operation(self, obj: Any, transaction_id: int, action: str):
         tx = self._validate_active_transaction(transaction_id)

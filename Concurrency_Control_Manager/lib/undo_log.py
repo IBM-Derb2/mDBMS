@@ -45,6 +45,11 @@ class UndoLogManager:
         self.undo_logs: Dict[int, List[UndoLogEntry]] = {}
         self.total_logged_operations = 0
         self.total_rollbacks = 0
+        self.storage_manager = None  # NEW: Will be set by CCM
+
+    def set_storage_manager(self, storage_manager):
+        """Set storage manager reference for actual rollback operations."""
+        self.storage_manager = storage_manager
 
     def log_operation(
         self,
@@ -83,9 +88,21 @@ class UndoLogManager:
         return logs
 
     def _undo_operation(self, entry: UndoLogEntry):
-        """Undo a single operation."""
-        # In a real system, this would interact with Storage Manager
-        pass
+        """Undo a single operation by restoring old value to storage."""
+        print(f"[UndoLog] Rolling back: {entry}")
+
+        # If storage manager is available, write old value back
+        if self.storage_manager:
+            self.storage_manager.write_block(
+                object_id=entry.object_id,
+                old_value=entry.old_value,
+                operation_type=entry.operation_type.value,
+                transaction_id=entry.transaction_id,
+            )
+        else:
+            print(
+                f"[UndoLog] WARNING: No storage manager set, rollback simulated only"
+            )
 
     def commit_transaction(self, transaction_id: int):
         """Clean up undo logs after successful commit."""
@@ -93,9 +110,7 @@ class UndoLogManager:
             del self.undo_logs[transaction_id]
 
     def abort_transaction(self, transaction_id: int):
-        """Rollback and clean up undo logs after abort."""
-        self.rollback_transaction(transaction_id)
-
+        """Clean up undo logs after transaction abort (after rollback completed)."""
         if transaction_id in self.undo_logs:
             del self.undo_logs[transaction_id]
 
@@ -106,7 +121,8 @@ class UndoLogManager:
     def has_logs(self, transaction_id: int) -> bool:
         """Check if transaction has any undo logs."""
         return (
-            transaction_id in self.undo_logs and len(self.undo_logs[transaction_id]) > 0
+            transaction_id in self.undo_logs
+            and len(self.undo_logs[transaction_id]) > 0
         )
 
     def get_statistics(self) -> Dict[str, Any]:

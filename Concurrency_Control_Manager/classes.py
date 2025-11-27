@@ -10,6 +10,7 @@ from lib.transaction_coordinator import TransactionCoordinator
 from lib.deadlock_detector import DeadlockDetector
 from lib.transaction_id_generator import TransactionIdGenerator
 from lib.undo_log import UndoLogManager
+from lib.mock_storage import MockStorageManager  # NEW import
 
 
 class ConcurrencyControlManager:
@@ -30,6 +31,8 @@ class ConcurrencyControlManager:
 
         self.tx_manager = TransactionManager()
         self.undo_log_manager = UndoLogManager()
+        self.mock_storage = MockStorageManager()  # NEW: Initialize mock storage
+        self.undo_log_manager.set_storage_manager(self.mock_storage)  # NEW: Connect to undo log
         self.strategy: ConcurrencyStrategy = LockBasedStrategy()
         self.id_generator = TransactionIdGenerator()
         self.coordinator = TransactionCoordinator(self.tx_manager, self.strategy)
@@ -104,3 +107,6 @@ class ConcurrencyControlManager:
             self.strategy.set_transaction_manager(self.tx_manager)
         if hasattr(self.strategy, "set_deadlock_callback"):
             self.strategy.set_deadlock_callback(self.coordinator._on_potential_deadlock)
+        # NEW: Reconnect abort callback for wound-wait
+        if hasattr(self.strategy, "set_abort_callback"):
+            self.strategy.set_abort_callback(self.coordinator._auto_abort)

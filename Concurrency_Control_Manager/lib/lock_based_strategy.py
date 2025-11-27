@@ -27,6 +27,7 @@ class LockBasedStrategy(ConcurrencyStrategy):
         self.lock_timeout = 5.0  # seconds
         self.tx_manager_ref: Optional[Any] = None
         self.deadlock_callback: Optional[Callable] = None
+        self.abort_callback: Optional[Callable] = None  # NEW: callback to abort transactions
 
     def set_transaction_manager(self, tx_manager):
         """Set reference to transaction manager for waiting_for updates."""
@@ -35,6 +36,10 @@ class LockBasedStrategy(ConcurrencyStrategy):
     def set_deadlock_callback(self, callback: Callable):
         """Set callback function to trigger deadlock detection."""
         self.deadlock_callback = callback
+
+    def set_abort_callback(self, callback: Callable):
+        """Set callback function to abort transactions (for wound-wait)."""
+        self.abort_callback = callback
 
     def _get_object_id(self, obj: Any) -> str:
         return str(obj)
@@ -167,6 +172,27 @@ class LockBasedStrategy(ConcurrencyStrategy):
                     # Trigger deadlock detection
                     if self.deadlock_callback:
                         self.deadlock_callback()
+                else:
+                    # FIXED: Handle deadlock prevention schemes properly
+                    if self.deadlock_prevention_scheme == "wait-die":
+                        # Younger transaction dies
+                        raise Exception(
+                            f"[Wait-Die] TX {transaction_id} aborted: younger than holder(s) {holders}"
+                        )
+                    elif self.deadlock_prevention_scheme == "wound-wait":
+                        # Older transaction wounds (aborts) younger holders
+                        print(f"[Wound-Wait] TX {transaction_id} checking holders: {holders}")
+                        if self.abort_callback:
+                            for holder_id in holders:
+                                if holder_id > transaction_id:  # Only wound younger
+                                    print(f"[Wound-Wait] TX {transaction_id} wounding younger TX {holder_id}")
+                                    self.abort_callback(holder_id, f"Wounded by older TX {transaction_id}")
+                                else:
+                                    print(f"[Wound-Wait] TX {transaction_id} skipping TX {holder_id} (not younger)")
+                        else:
+                            print(f"[Wound-Wait] WARNING: No abort_callback set!")
+                        # After wounding, older transaction can proceed
+                        return Response(allowed=True, transaction_id=transaction_id)
 
                 return Response(allowed=False, transaction_id=transaction_id)
 
@@ -195,6 +221,27 @@ class LockBasedStrategy(ConcurrencyStrategy):
                         # Trigger deadlock detection
                         if self.deadlock_callback:
                             self.deadlock_callback()
+                    else:
+                        # FIXED: Handle deadlock prevention schemes properly
+                        if self.deadlock_prevention_scheme == "wait-die":
+                            # Younger transaction dies
+                            raise Exception(
+                                f"[Wait-Die] TX {transaction_id} aborted: younger than holder(s) {holders}"
+                            )
+                        elif self.deadlock_prevention_scheme == "wound-wait":
+                            # Older transaction wounds (aborts) younger holders
+                            print(f"[Wound-Wait] TX {transaction_id} checking holders: {holders}")
+                            if self.abort_callback:
+                                for holder_id in holders:
+                                    if holder_id > transaction_id:  # Only wound younger
+                                        print(f"[Wound-Wait] TX {transaction_id} wounding younger TX {holder_id}")
+                                        self.abort_callback(holder_id, f"Wounded by older TX {transaction_id}")
+                                    else:
+                                        print(f"[Wound-Wait] TX {transaction_id} skipping TX {holder_id} (not younger)")
+                            else:
+                                print(f"[Wound-Wait] WARNING: No abort_callback set!")
+                            # After wounding, older transaction can proceed
+                            return Response(allowed=True, transaction_id=transaction_id)
 
                     return Response(allowed=False, transaction_id=transaction_id)
                 else:

@@ -1,175 +1,104 @@
-from typing import Optional, Dict, Any, List
-from enum import Enum
-from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, field
 from datetime import datetime
+from .transaction_model import TransactionManager, TransactionStatus
+from .strategy_interface import ConcurrencyStrategy
 from .undo_log import UndoLogManager
-from .transaction_model import TransactionStatus
-
-
-class EndTransactionResult(Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    VALIDATION_FAILED = "validation_failed"
-    RESOURCE_CLEANUP_FAILED = "resource_cleanup_failed"
 
 
 @dataclass
 class EndTransactionReport:
+    """Result report for end transaction operation."""
     transaction_id: int
-    result: EndTransactionResult
-    timestamp: datetime
-    locks_released: List[str]
-    resources_cleaned: List[str]
-    validation_errors: List[str]
-    execution_time_ms: float
+    success: bool = False
+    messages: List[str] = field(default_factory=list)
 
-    def __repr__(self):
-        return (
-            f"EndTxReport(TX={self.transaction_id}, "
-            f"Result={self.result.value}, "
-            f"Locks Released={len(self.locks_released)}, "
-            f"Time={self.execution_time_ms:.2f}ms)"
-        )
+    def add_message(self, message: str):
+        self.messages.append(message)
+
+    def __str__(self):
+        status = "SUCCESS" if self.success else "FAILED"
+        msg_text = "\n".join(f"  - {msg}" for msg in self.messages)
+        return f"End Transaction TX {self.transaction_id}: {status}\n{msg_text}"
 
 
 class EndTransactionManager:
+    """
+    Manages the end transaction process (commit/abort).
+    
+    Responsibilities:
+    - Validate transaction can be ended
+    - Release all locks held by transaction
+    - Update transaction status
+    - Perform rollback if aborting (with undo log support)
+    """
 
-    def __init__(
-        self, tx_manager, strategy, undo_log_manager: Optional[UndoLogManager] = None
-    ):
+    def __init__(self, tx_manager: TransactionManager, strategy: ConcurrencyStrategy):
         self.tx_manager = tx_manager
         self.strategy = strategy
-        self.undo_log_manager = (
-            undo_log_manager if undo_log_manager else UndoLogManager()
-        )
-        self.end_transaction_history: List[EndTransactionReport] = []
+        self.undo_log_manager = None  # Will be set by ConcurrencyControlManager
 
     def end_transaction(
         self, transaction_id: int, is_commit: bool = True
     ) -> EndTransactionReport:
-        start_time = datetime.now()
-        locks_released = []
-        resources_cleaned = []
-        validation_errors = []
-        result = EndTransactionResult.SUCCESS
-
+        """Execute end transaction with undo log support."""
+        # Initialize report first
+        report = EndTransactionReport(transaction_id=transaction_id)
+        
         try:
+            # Validate transaction exists and is active
             tx = self.tx_manager.get_transaction(transaction_id)
             if not tx:
-                validation_errors.append(f"Transaction {transaction_id} not found")
-                result = EndTransactionResult.VALIDATION_FAILED
-                raise ValueError(f"Transaction {transaction_id} not found")
+                report.success = False
+                report.add_message(f"Transaction {transaction_id} not found")
+                return report
 
-            if is_commit:
-                if self._validation_needed_for_strategy():
-                    if hasattr(self.strategy, "validate_for_commit"):
-                        is_valid, strategy_errors = self.strategy.validate_for_commit(
-                            transaction_id
-                        )
-                        if not is_valid:
-                            validation_errors.extend(strategy_errors)
-                            result = EndTransactionResult.VALIDATION_FAILED
-                            is_commit = False
-                    else:
-                        validation_result = self._perform_final_validation(
-                            transaction_id
-                        )
-                        if not validation_result["valid"]:
-                            validation_errors.extend(validation_result["errors"])
-                            result = EndTransactionResult.VALIDATION_FAILED
-                            is_commit = False
+            if tx.status != TransactionStatus.ACTIVE:
+                report.success = False
+                report.add_message(
+                    f"Transaction {transaction_id} is not active (status: {tx.status.value})"
+                )
+                return report
 
-            accessed_objects = tx.get_accessed_objects()
-            locks_released = self._release_resources_list(
-                transaction_id, accessed_objects
-            )
-
-            if is_commit and result == EndTransactionResult.SUCCESS:
-                self.tx_manager.commit_transaction(transaction_id)
-                resources_cleaned.append(f"Transaction {transaction_id} committed")
-
-                if hasattr(self.strategy, "commit_validation"):
-                    self.strategy.commit_validation(transaction_id)
-
-                self.undo_log_manager.commit_transaction(transaction_id)
-                resources_cleaned.append(f"Undo logs cleared for TX {transaction_id}")
-            else:
-                if self.undo_log_manager.has_logs(transaction_id):
-                    rolled_back = self.undo_log_manager.abort_transaction(
-                        transaction_id
-                    )
-                    resources_cleaned.append(
+            # Perform rollback if aborting
+            if not is_commit and self.undo_log_manager:
+                rolled_back = self.undo_log_manager.rollback_transaction(transaction_id)
+                if rolled_back:  # Check if list is not None/empty
+                    report.add_message(
                         f"Rolled back {len(rolled_back)} operations for TX {transaction_id}"
                     )
+                else:
+                    report.add_message(f"No operations to rollback for TX {transaction_id}")
+                
+                # Clean up undo logs after rollback
+                self.undo_log_manager.abort_transaction(transaction_id)
 
-                if hasattr(self.strategy, "abort_transaction"):
-                    self.strategy.abort_transaction(transaction_id)
-                    resources_cleaned.append(
-                        f"Strategy abort cleanup for TX {transaction_id}"
-                    )
+            # Clean up undo logs if committing
+            if is_commit and self.undo_log_manager:
+                self.undo_log_manager.commit_transaction(transaction_id)
 
-                self.tx_manager.fail_transaction(
-                    transaction_id,
-                    (
-                        "Validation failed"
-                        if validation_errors
-                        else "User requested abort"
-                    ),
-                )
-                self.tx_manager.abort_transaction(transaction_id)
-                resources_cleaned.append(f"Transaction {transaction_id} aborted")
-
+            # Release locks
             self.strategy.end_transaction(transaction_id)
-            resources_cleaned.append(
-                f"Strategy cleanup (locks released) for TX {transaction_id}"
-            )
+            report.add_message(f"Released locks for TX {transaction_id}")
 
+            # Update transaction status
+            if is_commit:
+                tx.status = TransactionStatus.COMMITTED
+                report.add_message(f"Transaction {transaction_id} committed successfully")
+            else:
+                tx.status = TransactionStatus.ABORTED
+                report.add_message(f"Transaction {transaction_id} aborted")
+
+            # Mark as terminated
             self.tx_manager.terminate_transaction(transaction_id)
-            resources_cleaned.append(f"Transaction {transaction_id} terminated")
+            report.success = True
 
         except Exception as e:
-            result = EndTransactionResult.RESOURCE_CLEANUP_FAILED
-            validation_errors.append(f"Error: {str(e)}")
+            report.success = False
+            report.add_message(f"Error during end transaction: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
-            tx = self.tx_manager.get_transaction(transaction_id)
-            current_status = tx.status if tx else None
-
-            try:
-                self.strategy.end_transaction(transaction_id)
-            except Exception:
-                pass
-
-            if current_status and current_status != TransactionStatus.TERMINATED:
-                try:
-                    if current_status not in [
-                        TransactionStatus.COMMITTED,
-                        TransactionStatus.ABORTED,
-                    ]:
-                        self.tx_manager.fail_transaction(
-                            transaction_id, "Emergency cleanup"
-                        )
-                        self.tx_manager.abort_transaction(transaction_id)
-
-                    self.tx_manager.terminate_transaction(transaction_id)
-                except Exception:
-                    pass
-
-            raise
-
-        end_time = datetime.now()
-        execution_time_ms = (end_time - start_time).total_seconds() * 1000
-
-        report = EndTransactionReport(
-            transaction_id=transaction_id,
-            result=result,
-            timestamp=end_time,
-            locks_released=locks_released,
-            resources_cleaned=resources_cleaned,
-            validation_errors=validation_errors,
-            execution_time_ms=execution_time_ms,
-        )
-
-        self.end_transaction_history.append(report)
         return report
 
     def _validation_needed_for_strategy(self) -> bool:
@@ -275,3 +204,7 @@ class EndTransactionManager:
         print(f"Validation Failed: {stats['validation_failed']}")
         print(f"Average Execution Time: {stats['avg_execution_time_ms']:.2f} ms")
         print("=" * 60 + "\n")
+
+
+# Alias for backward compatibility
+EndTransactionResult = EndTransactionReport
