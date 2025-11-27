@@ -6,6 +6,7 @@ Falls back to mock statistics if storage manager is not available.
 """
 
 from typing import Dict, Optional
+from globalsy.constants.query_operators import QueryOperators
 
 # Try to import Storage Manager
 try:
@@ -194,9 +195,9 @@ class StatisticsManager:
         stats = self.get_table_stats(table_name)
         if not stats or column not in stats.column_stats:
             # Default selectivity estimates
-            if operator in ['=', '!=']:
+            if operator in [QueryOperators.EQ, QueryOperators.NEQ]:
                 return 0.1  # 10% for equality
-            elif operator in ['<', '<=', '>', '>=']:
+            elif operator in [QueryOperators.LT, QueryOperators.LTE, QueryOperators.GT, QueryOperators.GTE]:
                 return 0.3  # 30% for range
             else:
                 return 0.5  # 50% for unknown
@@ -206,7 +207,7 @@ class StatisticsManager:
         V_A_r = col_stats['distinct_values']
 
         # Selectivity based on operator and column stats
-        if operator == '=':
+        if operator == QueryOperators.EQ:
             # σ_A=v(r): Equality condition on a key attribute = 1
             # For non-key: selectivity = n_r / V(A,r) = 1 / V(A,r) (normalized)
             if V_A_r == n_r:  # Unique column (key)
@@ -214,12 +215,12 @@ class StatisticsManager:
             else:
                 return 1.0 / V_A_r
 
-        elif operator == '!=':
+        elif operator == QueryOperators.NEQ:
             # Negation: 1 - selectivity of equality
             eq_selectivity = 1.0 / V_A_r
             return 1.0 - eq_selectivity
 
-        elif operator in ['<', '<=', '>', '>=']:
+        elif operator in [QueryOperators.LT, QueryOperators.LTE, QueryOperators.GT, QueryOperators.GTE]:
             # σ_A≤v(r): Range condition
             # If min/max available, use formula: (v - min(A,r)) / (max(A,r) - min(A,r))
             if col_stats['min'] is not None and col_stats['max'] is not None and value is not None:
@@ -238,7 +239,7 @@ class StatisticsManager:
                     if max_val == min_val:
                         return 0.5  # All values are the same
 
-                    if operator in ['<', '<=']:
+                    if operator in [QueryOperators.LT, QueryOperators.LTE]:
                         if val < min_val:
                             return 0.0
                         elif val > max_val:
