@@ -3,9 +3,8 @@ Query Parsers
 Handles parsing of DML queries: SELECT, UPDATE, DELETE, INSERT.
 """
 
-from globalsy.classes.query_tree import QueryTree
+from ...query_types import QueryTree
 from globalsy.constants.query_types import QueryTypes
-from globalsy.constants.query_operators import QueryOperators
 from .base_parser import BaseParser
 from .expression_parser import ExpressionParser
 
@@ -32,29 +31,29 @@ class QueryParsers(BaseParser):
 
     def parse_select(self) -> QueryTree:
         """Parse SELECT statement"""
-        self._expect_keyword(QueryTypes.SELECT)
+        self._expect_keyword('SELECT')
 
         # Parse columns
         columns_node = self._parse_select_columns()
 
         # Parse FROM clause
         from_node = None
-        if self._match_keyword(QueryTypes.FROM):
+        if self._match_keyword('FROM'):
             from_node = self._parse_from_clause()
 
         # Parse WHERE clause
         where_node = None
-        if self._match_keyword(QueryTypes.WHERE):
+        if self._match_keyword('WHERE'):
             where_node = self._parse_where_clause()
 
         # Parse ORDER BY clause
         order_by_node = None
-        if self._match_keyword(QueryTypes.ORDER):
+        if self._match_keyword('ORDER'):
             order_by_node = self._parse_order_by_clause()
 
         # Parse LIMIT clause
         limit_node = None
-        if self._match_keyword(QueryTypes.LIMIT):
+        if self._match_keyword('LIMIT'):
             limit_node = self._parse_limit_clause()
 
         # Build SELECT tree
@@ -90,7 +89,7 @@ class QueryParsers(BaseParser):
                 self.current_token = self.expr_parser.current_token
 
                 # Check for AS alias
-                if self._match_keyword(QueryTypes.AS):
+                if self._match_keyword('AS'):
                     self._advance()
                     if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
                         bad = self.current_token.value if self.current_token else 'EOF'
@@ -113,7 +112,7 @@ class QueryParsers(BaseParser):
 
     def _parse_from_clause(self) -> QueryTree:
         """Parse FROM clause with tables and joins"""
-        self._expect_keyword(QueryTypes.FROM)
+        self._expect_keyword('FROM')
 
         # Parse first table
         tables = [self._parse_table_reference()]
@@ -123,8 +122,8 @@ class QueryParsers(BaseParser):
             if self._match_punctuation(','):
                 self._advance()
                 tables.append(self._parse_table_reference())
-            elif self._match_keyword(QueryTypes.JOIN) or self._match_keyword(QueryTypes.INNER) or \
-                    self._match_keyword(QueryTypes.NATURAL):
+            elif self._match_keyword('JOIN') or self._match_keyword('INNER') or \
+                    self._match_keyword('NATURAL'):
                 tables.append(self._parse_join())
             elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
                     self.current_token.value.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
@@ -133,7 +132,7 @@ class QueryParsers(BaseParser):
             else:
                 break
 
-        return QueryTree(type=QueryTypes.FROM, val='', childs=tables)
+        return QueryTree(type='FROM', val='', childs=tables)
 
     def _parse_table_reference(self) -> QueryTree:
         """Parse a table reference with optional alias (supports schema.table syntax)"""
@@ -159,7 +158,7 @@ class QueryParsers(BaseParser):
         table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Check for AS alias
-        if self._match_keyword(QueryTypes.AS):
+        if self._match_keyword('AS'):
             self._advance()
             if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
                 bad = self.current_token.value if self.current_token else 'EOF'
@@ -170,11 +169,11 @@ class QueryParsers(BaseParser):
             return QueryTree(type=QueryTypes.ALIAS, val=alias, childs=[table_node])
         # Check for implicit alias (no AS keyword)
         elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
-                not self._match_keyword(QueryTypes.WHERE) and \
-                not self._match_keyword(QueryTypes.JOIN) and \
+                not self._match_keyword('WHERE') and \
+                not self._match_keyword('JOIN') and \
                 not self._match_punctuation(',') and \
-                not self._match_keyword(QueryTypes.ORDER) and \
-                not self._match_keyword(QueryTypes.LIMIT):
+                not self._match_keyword('ORDER') and \
+                not self._match_keyword('LIMIT'):
             alias = self.current_token.value
             # Reject unsupported JOIN keywords used as aliases
             if alias.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
@@ -190,15 +189,15 @@ class QueryParsers(BaseParser):
         start_pos = self.position
 
         # Check for NATURAL JOIN
-        if self._match_keyword(QueryTypes.NATURAL):
+        if self._match_keyword('NATURAL'):
             self._advance()
             join_type = 'NATURAL'
         # Check for explicit INNER keyword (optional)
-        elif self._match_keyword(QueryTypes.INNER):
+        elif self._match_keyword('INNER'):
             self._advance()
             join_type = 'INNER'
 
-        self._expect_keyword(QueryTypes.JOIN)
+        self._expect_keyword('JOIN')
 
         # Parse table reference
         table_node = self._parse_table_reference()
@@ -210,7 +209,7 @@ class QueryParsers(BaseParser):
             pass
         else:
             # INNER JOIN requires ON clause
-            self._expect_keyword(QueryTypes.ON)
+            self._expect_keyword('ON')
             self._sync_expression_parser()
             condition_node = self.expr_parser.parse_expression()
             self.position = self.expr_parser.position
@@ -233,8 +232,8 @@ class QueryParsers(BaseParser):
 
     def _parse_order_by_clause(self) -> QueryTree:
         """Parse ORDER BY clause"""
-        self._expect_keyword(QueryTypes.ORDER)
-        self._expect_keyword(QueryTypes.BY)
+        self._expect_keyword('ORDER')
+        self._expect_keyword('BY')
         start_pos = self.position
 
         columns = []
@@ -256,9 +255,9 @@ class QueryParsers(BaseParser):
                 column_name = column_name + '.' + self.current_token.value
                 self._advance()
             direction = 'ASC'
-            if self._match_keyword(QueryTypes.ASC):
+            if self._match_keyword('ASC'):
                 self._advance()
-            elif self._match_keyword(QueryTypes.DESC):
+            elif self._match_keyword('DESC'):
                 direction = 'DESC'
                 self._advance()
             columns.append(QueryTree(type=QueryTypes.COLUMN, val=column_name))
@@ -288,7 +287,7 @@ class QueryParsers(BaseParser):
 
     def parse_update(self) -> QueryTree:
         """Parse UPDATE statement"""
-        self._expect_keyword(QueryTypes.UPDATE)
+        self._expect_keyword('UPDATE')
         if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
             bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
@@ -299,7 +298,7 @@ class QueryParsers(BaseParser):
         table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Parse SET clause
-        self._expect_keyword(QueryTypes.SET)
+        self._expect_keyword('SET')
         set_node = self._parse_set_clause()
 
         # Parse WHERE clause
@@ -327,7 +326,7 @@ class QueryParsers(BaseParser):
             self._advance()
 
             # Expect = operator
-            if not self._match_operator(QueryOperators.EQ):
+            if not self._match_operator('='):
                 bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
                     f"Expected '=' in SET clause, got '{bad}'")
@@ -339,7 +338,7 @@ class QueryParsers(BaseParser):
             self.current_token = self.expr_parser.current_token
 
             col_node = QueryTree(type=QueryTypes.COLUMN, val=column)
-            assignment = QueryTree(type=QueryTypes.ASSIGNMENT, val=QueryOperators.EQ, childs=[
+            assignment = QueryTree(type=QueryTypes.ASSIGNMENT, val='=', childs=[
                                    col_node, value_expr])
             assignments.append(assignment)
 
@@ -353,8 +352,8 @@ class QueryParsers(BaseParser):
 
     def parse_delete(self) -> QueryTree:
         """Parse DELETE statement"""
-        self._expect_keyword(QueryTypes.DELETE)
-        self._expect_keyword(QueryTypes.FROM)
+        self._expect_keyword('DELETE')
+        self._expect_keyword('FROM')
         if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
             bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
@@ -377,8 +376,8 @@ class QueryParsers(BaseParser):
 
     def parse_insert(self) -> QueryTree:
         """Parse INSERT statement"""
-        self._expect_keyword(QueryTypes.INSERT)
-        self._expect_keyword(QueryTypes.INTO)
+        self._expect_keyword('INSERT')
+        self._expect_keyword('INTO')
         if not self.current_token or self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
             bad = self.current_token.value if self.current_token else 'EOF'
             raise ValueError(
@@ -394,7 +393,7 @@ class QueryParsers(BaseParser):
             columns_node = self._parse_column_list()
 
         # Parse VALUES
-        self._expect_keyword(QueryTypes.VALUES)
+        self._expect_keyword('VALUES')
         values_node = self._parse_values_clause()
 
         childs = [table_node]

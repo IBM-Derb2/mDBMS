@@ -3,9 +3,8 @@ Expression Parser
 Handles parsing of SQL expressions including arithmetic, comparisons, and logical operators.
 """
 
-from globalsy.classes.query_tree import QueryTree
+from ...query_types import QueryTree
 from globalsy.constants.query_types import QueryTypes
-from globalsy.constants.query_operators import QueryOperators
 from .base_parser import BaseParser
 
 
@@ -20,11 +19,11 @@ class ExpressionParser(BaseParser):
         """Parse OR expression"""
         left = self._parse_and_expression()
 
-        while self._match_keyword(QueryOperators.OR):
+        while self._match_keyword('OR'):
             self._advance()
             right = self._parse_and_expression()
             left = QueryTree(type=QueryTypes.OPERATOR,
-                             val=QueryOperators.OR, childs=[left, right])
+                             val='OR', childs=[left, right])
 
         return left
 
@@ -32,20 +31,20 @@ class ExpressionParser(BaseParser):
         """Parse AND expression"""
         left = self._parse_not_expression()
 
-        while self._match_keyword(QueryOperators.AND):
+        while self._match_keyword('AND'):
             self._advance()
             right = self._parse_not_expression()
             left = QueryTree(type=QueryTypes.OPERATOR,
-                             val=QueryOperators.AND, childs=[left, right])
+                             val='AND', childs=[left, right])
 
         return left
 
     def _parse_not_expression(self) -> QueryTree:
         """Parse NOT expression"""
-        if self._match_keyword(QueryOperators.NOT):
+        if self._match_keyword('NOT'):
             self._advance()
             operand = self._parse_comparison_expression()
-            return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.NOT, childs=[operand])
+            return QueryTree(type=QueryTypes.OPERATOR, val='NOT', childs=[operand])
         else:
             return self._parse_comparison_expression()
 
@@ -54,23 +53,23 @@ class ExpressionParser(BaseParser):
         left = self._parse_additive_expression()
 
         # Check for comparison operators
-        if self._match_operator(QueryOperators.EQ) or self._match_operator(QueryOperators.ALT_NEQ) or \
-           self._match_operator(QueryOperators.NEQ) or self._match_operator(QueryOperators.LT) or \
-           self._match_operator(QueryOperators.LTE) or self._match_operator(QueryOperators.GT) or \
-           self._match_operator(QueryOperators.GTE):
+        if self._match_operator('=') or self._match_operator('<>') or \
+           self._match_operator('!=') or self._match_operator('<') or \
+           self._match_operator('<=') or self._match_operator('>') or \
+           self._match_operator('>='):
             op = self.current_token.value
             self._advance()
             right = self._parse_additive_expression()
             return QueryTree(type=QueryTypes.OPERATOR, val=op, childs=[left, right])
 
         # Handle LIKE operator
-        if self._match_keyword(QueryOperators.LIKE):
+        if self._match_keyword('LIKE'):
             self._advance()
             right = self._parse_additive_expression()
-            return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.LIKE, childs=[left, right])
+            return QueryTree(type=QueryTypes.OPERATOR, val='LIKE', childs=[left, right])
 
         # Handle IN operator
-        if self._match_keyword(QueryOperators.IN):
+        if self._match_keyword('IN'):
             self._advance()
             if not self._match_punctuation('('):
                 raise ValueError("Expected '(' after IN")
@@ -91,17 +90,17 @@ class ExpressionParser(BaseParser):
                 raise ValueError("Expected ')' after IN list")
             self._advance()
 
-            return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.IN, childs=[left] + values)
+            return QueryTree(type=QueryTypes.OPERATOR, val='IN', childs=[left] + values)
 
         # Handle BETWEEN operator
-        if self._match_keyword(QueryOperators.BETWEEN):
+        if self._match_keyword('BETWEEN'):
             self._advance()
             lower = self._parse_additive_expression()
-            if not self._match_keyword(QueryOperators.AND):
+            if not self._match_keyword('AND'):
                 raise ValueError("Expected 'AND' in BETWEEN clause")
             self._advance()
             upper = self._parse_additive_expression()
-            return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.BETWEEN, childs=[left, lower, upper])
+            return QueryTree(type=QueryTypes.OPERATOR, val='BETWEEN', childs=[left, lower, upper])
 
         return left
 
@@ -109,7 +108,7 @@ class ExpressionParser(BaseParser):
         """Parse addition/subtraction"""
         left = self._parse_multiplicative_expression()
 
-        while self._match_operator(QueryOperators.PLUS) or self._match_operator(QueryOperators.MINUS):
+        while self._match_operator('+') or self._match_operator('-'):
             op = self.current_token.value
             self._advance()
             right = self._parse_multiplicative_expression()
@@ -122,7 +121,7 @@ class ExpressionParser(BaseParser):
         """Parse multiplication/division"""
         left = self._parse_primary_expression()
 
-        while self._match_operator(QueryOperators.MULTIPLY) or self._match_operator(QueryOperators.DIVIDE) or self._match_operator(QueryOperators.MODULO):
+        while self._match_operator('*') or self._match_operator('/') or self._match_operator('%'):
             op = self.current_token.value
             self._advance()
             right = self._parse_primary_expression()
@@ -134,10 +133,10 @@ class ExpressionParser(BaseParser):
     def _parse_primary_expression(self) -> QueryTree:
         """Parse primary expression (identifier, number, string, parentheses, unary minus)"""
         # Unary minus (negative numbers)
-        if self._match_operator(QueryOperators.MINUS):
+        if self._match_operator('-'):
             self._advance()
             expr = self._parse_primary_expression()
-            return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.MINUS, childs=[expr])
+            return QueryTree(type=QueryTypes.OPERATOR, val='-', childs=[expr])
 
         # Parentheses
         if self._match_punctuation('('):

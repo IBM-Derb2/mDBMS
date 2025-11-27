@@ -5,9 +5,7 @@ Orchestrates all the specialized parsers to parse SQL queries into QueryTree str
 
 from typing import List, Optional
 import logging
-from globalsy.classes.parsed_query import ParsedQuery
-from globalsy.classes.query_tree import QueryTree
-from globalsy.constants.query_types import QueryTypes
+from ..query_types import ParsedQuery, QueryTree
 from .helpers.tokenizer import SQLToken, SQLTokenizer
 from .parsers.base_parser import BaseParser
 from .parsers.expression_parser import ExpressionParser
@@ -34,28 +32,28 @@ class SQLParser(BaseParser):
         self._sync_parsers()
 
         # Determine query type from first keyword and delegate to appropriate parser
-        if self._match_keyword(QueryTypes.SELECT):
+        if self._match_keyword('SELECT'):
             tree = self.query_parser.parse_select()
             self._update_from_query_parser()
-        elif self._match_keyword(QueryTypes.UPDATE):
+        elif self._match_keyword('UPDATE'):
             tree = self.query_parser.parse_update()
             self._update_from_query_parser()
-        elif self._match_keyword(QueryTypes.DELETE):
+        elif self._match_keyword('DELETE'):
             tree = self.query_parser.parse_delete()
             self._update_from_query_parser()
-        elif self._match_keyword(QueryTypes.INSERT):
+        elif self._match_keyword('INSERT'):
             tree = self.query_parser.parse_insert()
             self._update_from_query_parser()
-        elif self._match_keyword(QueryTypes.CREATE):
+        elif self._match_keyword('CREATE'):
             tree = self.ddl_parser.parse_create()
             self._update_from_ddl_parser()
-        elif self._match_keyword(QueryTypes.DROP):
+        elif self._match_keyword('DROP'):
             tree = self.ddl_parser.parse_drop()
             self._update_from_ddl_parser()
-        elif self._match_keyword(QueryTypes.BEGIN):
+        elif self._match_keyword('BEGIN'):
             tree = self.ddl_parser.parse_begin_transaction()
             self._update_from_ddl_parser()
-        elif self._match_keyword(QueryTypes.COMMIT):
+        elif self._match_keyword('COMMIT'):
             tree = self.ddl_parser.parse_commit()
             self._update_from_ddl_parser()
         else:
