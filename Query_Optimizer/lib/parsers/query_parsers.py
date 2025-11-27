@@ -4,6 +4,7 @@ Handles parsing of DML queries: SELECT, UPDATE, DELETE, INSERT.
 """
 
 from ...query_types import QueryTree
+from globalsy.constants.query_types import QueryTypes
 from .base_parser import BaseParser
 from .expression_parser import ExpressionParser
 
@@ -66,7 +67,7 @@ class QueryParsers(BaseParser):
         if limit_node:
             childs.append(limit_node)
 
-        return QueryTree(type='SELECT', val='SELECT', childs=childs)
+        return QueryTree(type=QueryTypes.SELECT, val=QueryTypes.SELECT, childs=childs)
 
     def _parse_select_columns(self) -> QueryTree:
         """Parse column list in SELECT"""
@@ -78,7 +79,7 @@ class QueryParsers(BaseParser):
                 raise ValueError(
                     "Unexpected end of input while parsing SELECT column list")
             if self.current_token.value == '*':
-                columns.append(QueryTree(type='COLUMN', val='*'))
+                columns.append(QueryTree(type=QueryTypes.COLUMN, val='*'))
                 self._advance()
             else:
                 # Parse column expression
@@ -97,7 +98,7 @@ class QueryParsers(BaseParser):
                     alias = self.current_token.value
                     self._advance()
                     col_expr = QueryTree(
-                        type='ALIAS', val=alias, childs=[col_expr])
+                        type=QueryTypes.ALIAS, val=alias, childs=[col_expr])
 
                 columns.append(col_expr)
 
@@ -107,7 +108,7 @@ class QueryParsers(BaseParser):
             else:
                 break
 
-        return QueryTree(type='COLUMNS', val='', childs=columns)
+        return QueryTree(type=QueryTypes.COLUMNS, val='', childs=columns)
 
     def _parse_from_clause(self) -> QueryTree:
         """Parse FROM clause with tables and joins"""
@@ -154,7 +155,7 @@ class QueryParsers(BaseParser):
             table_name = table_name + '.' + self.current_token.value
             self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Check for AS alias
         if self._match_keyword('AS'):
@@ -165,7 +166,7 @@ class QueryParsers(BaseParser):
                     f"Expected alias name, got '{bad}'")
             alias = self.current_token.value
             self._advance()
-            return QueryTree(type='ALIAS', val=alias, childs=[table_node])
+            return QueryTree(type=QueryTypes.ALIAS, val=alias, childs=[table_node])
         # Check for implicit alias (no AS keyword)
         elif self.current_token and self.current_token.type == 'IDENTIFIER' and \
                 not self._match_keyword('WHERE') and \
@@ -178,7 +179,7 @@ class QueryParsers(BaseParser):
             if alias.upper() in ('LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER'):
                 raise ValueError(f"Unsupported JOIN type: {alias.upper()}")
             self._advance()
-            return QueryTree(type='ALIAS', val=alias, childs=[table_node])
+            return QueryTree(type=QueryTypes.ALIAS, val=alias, childs=[table_node])
 
         return table_node
 
@@ -218,7 +219,7 @@ class QueryParsers(BaseParser):
         if condition_node:
             childs.append(condition_node)
 
-        return QueryTree(type='JOIN', val=join_type, childs=childs)
+        return QueryTree(type=QueryTypes.JOIN, val=join_type, childs=childs)
 
     def _parse_where_clause(self) -> QueryTree:
         """Parse WHERE clause"""
@@ -227,7 +228,7 @@ class QueryParsers(BaseParser):
         condition = self.expr_parser.parse_expression()
         self.position = self.expr_parser.position
         self.current_token = self.expr_parser.current_token
-        return QueryTree(type='WHERE', val='', childs=[condition])
+        return QueryTree(type=QueryTypes.WHERE, val='', childs=[condition])
 
     def _parse_order_by_clause(self) -> QueryTree:
         """Parse ORDER BY clause"""
@@ -259,7 +260,7 @@ class QueryParsers(BaseParser):
             elif self._match_keyword('DESC'):
                 direction = 'DESC'
                 self._advance()
-            columns.append(QueryTree(type='COLUMN', val=column_name))
+            columns.append(QueryTree(type=QueryTypes.COLUMN, val=column_name))
             directions.append(direction)
             if self._match_punctuation(','):
                 self._advance()
@@ -269,8 +270,8 @@ class QueryParsers(BaseParser):
         order_children = []
         for col, dirn in zip(columns, directions):
             order_children.append(
-                QueryTree(type='ORDER_ITEM', val=dirn, childs=[col]))
-        return QueryTree(type='ORDER_BY', val='ORDER_BY', childs=order_children)
+                QueryTree(type=QueryTypes.ORDER_ITEM, val=dirn, childs=[col]))
+        return QueryTree(type=QueryTypes.ORDER_BY, val=QueryTypes.ORDER_BY, childs=order_children)
 
     def _parse_limit_clause(self) -> QueryTree:
         """Parse LIMIT clause"""
@@ -282,7 +283,7 @@ class QueryParsers(BaseParser):
         limit_val = self.current_token.value
         self._advance()
 
-        return QueryTree(type='LIMIT', val=limit_val)
+        return QueryTree(type=QueryTypes.LIMIT, val=limit_val)
 
     def parse_update(self) -> QueryTree:
         """Parse UPDATE statement"""
@@ -294,7 +295,7 @@ class QueryParsers(BaseParser):
         table_name = self.current_token.value
         self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Parse SET clause
         self._expect_keyword('SET')
@@ -309,7 +310,7 @@ class QueryParsers(BaseParser):
         if where_node:
             childs.append(where_node)
 
-        return QueryTree(type='UPDATE', val='UPDATE', childs=childs)
+        return QueryTree(type=QueryTypes.UPDATE, val=QueryTypes.UPDATE, childs=childs)
 
     def _parse_set_clause(self) -> QueryTree:
         """Parse SET clause in UPDATE"""
@@ -336,8 +337,8 @@ class QueryParsers(BaseParser):
             self.position = self.expr_parser.position
             self.current_token = self.expr_parser.current_token
 
-            col_node = QueryTree(type='COLUMN', val=column)
-            assignment = QueryTree(type='ASSIGNMENT', val='=', childs=[
+            col_node = QueryTree(type=QueryTypes.COLUMN, val=column)
+            assignment = QueryTree(type=QueryTypes.ASSIGNMENT, val='=', childs=[
                                    col_node, value_expr])
             assignments.append(assignment)
 
@@ -347,7 +348,7 @@ class QueryParsers(BaseParser):
             else:
                 break
 
-        return QueryTree(type='SET', val='', childs=assignments)
+        return QueryTree(type=QueryTypes.SET, val='', childs=assignments)
 
     def parse_delete(self) -> QueryTree:
         """Parse DELETE statement"""
@@ -360,7 +361,7 @@ class QueryParsers(BaseParser):
         table_name = self.current_token.value
         self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Parse WHERE clause
         where_node = None
@@ -371,7 +372,7 @@ class QueryParsers(BaseParser):
         if where_node:
             childs.append(where_node)
 
-        return QueryTree(type='DELETE', val='DELETE', childs=childs)
+        return QueryTree(type=QueryTypes.DELETE, val=QueryTypes.DELETE, childs=childs)
 
     def parse_insert(self) -> QueryTree:
         """Parse INSERT statement"""
@@ -384,7 +385,7 @@ class QueryParsers(BaseParser):
         table_name = self.current_token.value
         self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Parse column list (optional)
         columns_node = None
@@ -400,7 +401,7 @@ class QueryParsers(BaseParser):
             childs.append(columns_node)
         childs.append(values_node)
 
-        return QueryTree(type='INSERT', val='INSERT', childs=childs)
+        return QueryTree(type=QueryTypes.INSERT, val=QueryTypes.INSERT, childs=childs)
 
     def _parse_column_list(self) -> QueryTree:
         """Parse column list in INSERT"""
@@ -412,8 +413,8 @@ class QueryParsers(BaseParser):
                 bad = self.current_token.value if self.current_token else 'EOF'
                 raise ValueError(
                     f"Expected column name, got '{bad}'")
-            columns.append(
-                QueryTree(type='COLUMN', val=self.current_token.value))
+            columns.append(QueryTree(type=QueryTypes.COLUMN,
+                           val=self.current_token.value))
             self._advance()
 
             if self._match_punctuation(','):
@@ -423,7 +424,7 @@ class QueryParsers(BaseParser):
 
         self._expect_punctuation(')')
 
-        return QueryTree(type='COLUMNS', val='', childs=columns)
+        return QueryTree(type=QueryTypes.COLUMNS, val='', childs=columns)
 
     def _parse_values_clause(self) -> QueryTree:
         """Parse VALUES clause"""
@@ -444,4 +445,4 @@ class QueryParsers(BaseParser):
 
         self._expect_punctuation(')')
 
-        return QueryTree(type='VALUES', val='', childs=values)
+        return QueryTree(type=QueryTypes.VALUES, val='', childs=values)

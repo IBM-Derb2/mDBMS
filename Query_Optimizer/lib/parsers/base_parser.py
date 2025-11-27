@@ -5,7 +5,6 @@ Contains core parsing utilities and base parser class.
 
 from typing import List, Optional
 import logging
-from ...query_types import QueryTree
 from ..helpers.tokenizer import SQLToken
 
 
