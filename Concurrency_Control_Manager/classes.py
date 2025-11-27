@@ -1,17 +1,17 @@
 from typing import Any
 import threading
-from lib.strategy_interface import ConcurrencyStrategy, Response
-from lib.lock_based_strategy import LockBasedStrategy
-from lib.timestamp_based_strategy import TimestampBasedStrategy
-from lib.validation_based_strategy import ValidationBasedStrategy
-from lib.multi_version_strategy import MultiVersionStrategy
-from lib.transaction_model import TransactionManager
-from lib.transaction_coordinator import TransactionCoordinator
-from lib.deadlock_detector import DeadlockDetector
-from lib.transaction_id_generator import TransactionIdGenerator
-from lib.undo_log import UndoLogManager
-from lib.failure_recovery_adapter import FailureRecoveryAdapter
-from lib.mock_storage import MockStorageManager  # NEW import
+from Concurrency_Control_Manager.lib.strategy_interface import ConcurrencyStrategy, Response
+from Concurrency_Control_Manager.lib.lock_based_strategy import LockBasedStrategy
+from Concurrency_Control_Manager.lib.timestamp_based_strategy import TimestampBasedStrategy
+from Concurrency_Control_Manager.lib.validation_based_strategy import ValidationBasedStrategy
+from Concurrency_Control_Manager.lib.multi_version_strategy import MultiVersionStrategy
+from Concurrency_Control_Manager.lib.transaction_model import TransactionManager
+from Concurrency_Control_Manager.lib.transaction_coordinator import TransactionCoordinator
+from Concurrency_Control_Manager.lib.deadlock_detector import DeadlockDetector
+from Concurrency_Control_Manager.lib.transaction_id_generator import TransactionIdGenerator
+from Concurrency_Control_Manager.lib.undo_log import UndoLogManager
+from Concurrency_Control_Manager.lib.failure_recovery_adapter import FailureRecoveryAdapter
+from Concurrency_Control_Manager.lib.mock_storage import MockStorageManager
 
 
 class ConcurrencyControlManager:
