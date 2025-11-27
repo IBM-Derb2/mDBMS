@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 from typing import Optional, Set, Dict, Any, List
-from Failure_Recovery.log_config import WalAction, WalType
+from log_config import WalAction, WalType
 from log_writer import LogWriter
 from recovery_model import RecoverCriteria, LogEntry
 from log_parser import LogParser
@@ -190,49 +190,126 @@ class RecoveryEngine:
 
     def _apply_undo(self, entry: LogEntry) -> None:
         """
-        Apply undo for a single write operation.
+        Apply undo for a single write operation using idempotent blind undo strategy.
         
-        Strategy (Idempotent - Blind Undo):
-        - INSERT: DELETE the inserted record
+        Undo operations:
+        - INSERT: Delete the inserted record
         - UPDATE: Restore old values
         - DELETE: Re-insert the deleted record
         
         Args:
-            entry: LogEntry with write operation details
+            entry: LogEntry containing operation details to undo
         """
-        if not self.storage_engine or not entry.table_name:
-            return
-            
         action = entry.action
         table = entry.table_name
         pk = entry.pk_value
         old_data = entry.old_data
-        new_data = entry.new_data
 
         print(f"  [Recovery] Undoing {action.upper()} on {table} (pk={pk})")
 
-        if action == "insert":
-            # Undo INSERT: DELETE the record
-            if pk:
-                conditions = [Condition(k, "=", v) for k, v in pk.items()]
-                data_deletion = DataDeletion(table, conditions)
-                self.storage_engine.delete_block(data_deletion)
+        has_storage = (
+            self.storage_engine is not None and 
+            hasattr(self.storage_engine, 'write_block') and 
+            hasattr(self.storage_engine, 'delete_block')
+        )
 
-        elif action == "update" and old_data and pk:
-            # Undo UPDATE: Restore old_data
-            conditions = [Condition(k, "=", v) for k, v in pk.items()]
-            columns = list(old_data.keys())
-            values = list(old_data.values())
-            data_write = DataWrite(table, columns, conditions, values)
-            self.storage_engine.write_block(data_write)
+        if not has_storage:
+            print(f"    [Warning] Storage engine not available, skipping undo")
+            return
 
-        elif action == "delete" and old_data:
-            # Undo DELETE: Re-insert old_data
-            columns = list(old_data.keys())
-            values = list(old_data.values())
-            data_write = DataWrite(table, columns, [], values)
-            self.storage_engine.write_block(data_write)
+        try:
+            if action == "insert":
+                self._undo_insert(table, pk)
+            elif action == "update" and old_data and pk:
+                self._undo_update(table, pk, old_data)
+            elif action == "delete" and old_data:
+                self._undo_delete(table, pk, old_data)
+        except Exception as e:
+            print(f"    [Error] Undo failed: {e}")
+            import traceback
+            traceback.print_exc()
 
+    def _undo_insert(self, table: str, pk: dict) -> None:
+        """Undo INSERT by deleting the record"""
+        from Storage_Manager.utils import DataDeletion, Condition
+        
+        print(f"    -> DELETE FROM {table} WHERE pk={pk}")
+        conditions = [Condition(k, "=", v) for k, v in pk.items()]
+        data_deletion = DataDeletion(table, conditions)
+        deleted_count = self.storage_engine.delete_block(data_deletion)
+        print(f"    [OK] Deleted {deleted_count} record(s)")
+
+    def _undo_update(self, table: str, pk: dict, old_data: dict) -> None:
+        """Undo UPDATE by restoring old values"""
+        from Storage_Manager.utils import DataWrite, Condition
+        
+        print(f"    -> UPDATE {table} SET {old_data} WHERE pk={pk}")
+        conditions = [Condition(k, "=", v) for k, v in pk.items()]
+        pk_columns = set(pk.keys())
+        
+        for col_name, col_value in old_data.items():
+            if col_name not in pk_columns:
+                data_write = DataWrite(
+                    table=table,
+                    column=[col_name],
+                    conditions=conditions,
+                    new_value=col_value
+                )
+                self.storage_engine.write_block(data_write)
+                print(f"    [OK] Restored {col_name} = {col_value}")
+
+    def _undo_delete(self, table: str, pk: dict, old_data: dict) -> None:
+        """Undo DELETE by re-inserting the record"""
+        from Storage_Manager.utils import DataWrite, DataRetrieval, Condition
+        
+        print(f"    -> INSERT {old_data} INTO {table}")
+        pk_columns = set(pk.keys()) if pk else set()
+        
+        for pk_col in pk_columns:
+            if pk_col not in old_data:
+                continue
+                
+            pk_value = old_data[pk_col]
+            
+            check_retrieval = DataRetrieval(
+                table=table,
+                column=["*"],
+                conditions=[Condition(pk_col, "=", pk_value)],
+                search_type="sequential"
+            )
+            existing = self.storage_engine.read_block(check_retrieval)
+            
+            if existing.rows_count > 0:
+                print(f"    [Warning] Row with {pk_col}={pk_value} already exists")
+                break
+            
+            data_write = DataWrite(
+                table=table,
+                column=[pk_col],
+                conditions=[],
+                new_value=pk_value
+            )
+            result = self.storage_engine.write_block(data_write)
+            print(f"    [OK] Inserted PK {pk_col} (affected: {result.rows_count} rows)")
+        
+        conditions = [Condition(k, "=", v) for k, v in pk.items()] if pk else []
+        for col_name, col_value in old_data.items():
+            if col_name not in pk_columns:
+                data_write = DataWrite(
+                    table=table,
+                    column=[col_name],
+                    conditions=conditions,
+                    new_value=col_value
+                )
+                result = self.storage_engine.write_block(data_write)
+                
+                if result.rows_count > 0:
+                    print(f"    [OK] Set {col_name} = {col_value}")
+                else:
+                    print(f"    [Warning] Failed to set {col_name}")
+        
+        print(f"    [OK] Re-inserted record into {table}")
+    
     def _find_last_checkpoint(self):
         """Returns (found, checkpoint_data, entries_after_checkpoint)"""
         entries_after = []

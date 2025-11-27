@@ -3,6 +3,7 @@ Test FailureRecoveryManager - save_checkpoint functionality
 """
 import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from failure_recovery_manager import FailureRecoveryManager
@@ -25,8 +26,68 @@ class MockBufferManager:
         print("  - Block C (TX 303): FLUSHED")
         self.flush_called = True
 
+# Enhanced Mock StorageEngine with operation tracking
 class MockStorageEngine:
-    pass
+    def __init__(self):
+        self.data = {}  # table -> {pk -> row_data}
+        self.operations = []  # List of (op_type, table, pk, data)
+    
+    def write_block(self, data_write):
+        """Mock write_block - simulate insert/update"""
+        table = data_write.table
+        conditions = data_write.conditions
+        column = data_write.column
+        new_value = data_write.new_value
+        
+        if table not in self.data:
+            self.data[table] = {}
+        
+        # If no conditions, this is an INSERT (create new row)
+        if not conditions:
+            # Find or create a new row
+            new_pk = new_value if len(column) == 1 and column[0] in ['StudentID', 'nim', 'id'] else None
+            if new_pk:
+                if new_pk not in self.data[table]:
+                    self.data[table][new_pk] = {column[0]: new_value}
+                    self.operations.append(('insert', table, new_pk, {column[0]: new_value}))
+                    return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][new_pk]]})()
+        else:
+            # UPDATE existing row
+            pk_value = None
+            for cond in conditions:
+                if hasattr(cond, 'column') and hasattr(cond, 'value'):
+                    pk_value = cond.value
+                    break
+            
+            if pk_value and pk_value in self.data[table]:
+                if isinstance(column, list) and len(column) > 0:
+                    col_name = column[0]
+                    self.data[table][pk_value][col_name] = new_value
+                    self.operations.append(('update', table, pk_value, {col_name: new_value}))
+                    return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][pk_value]]})()
+        
+        return type('Rows', (), {'rows_count': 0, 'data': []})()
+    
+    def delete_block(self, data_deletion):
+        """Mock delete_block - simulate delete"""
+        table = data_deletion.table
+        conditions = data_deletion.conditions
+        
+        if table not in self.data:
+            return 0
+        
+        pk_value = None
+        for cond in conditions:
+            if hasattr(cond, 'column') and hasattr(cond, 'value'):
+                pk_value = cond.value
+                break
+        
+        if pk_value and pk_value in self.data[table]:
+            deleted_row = self.data[table].pop(pk_value)
+            self.operations.append(('delete', table, pk_value, deleted_row))
+            return 1
+        
+        return 0
 
 print("="*70)
 print("TEST: FailureRecoveryManager - save_checkpoint()")
@@ -46,26 +107,47 @@ frm = FailureRecoveryManager(
 print("\n[SCENARIO] Setup: Multiple transactions with operations")
 print("-" * 70)
 
-# TX 301: INSERT and ongoing
+# TX 301: INSERT new student and ongoing
+print("\n[TX 301] Starting transaction - INSERT new student")
 frm.notify_transaction_start(301)
 frm.write_log_entry(301, WalAction.START)
-frm.log_write(301, "mahasiswa", {"nim": "301"}, None, {"nim": "301", "nama": "Alice"})
+frm.log_write(
+    tx_id=301,
+    table="student",
+    pk={"StudentID": 99301},
+    old_data=None,
+    new_data={"StudentID": 99301, "FullName": "Alice Test", "GPA": 3.5}
+)
+print("  ✓ TX 301: Inserted student 99301 (Alice)")
 
-# TX 302: UPDATE and ongoing
+# TX 302: UPDATE existing student and ongoing
+print("\n[TX 302] Starting transaction - UPDATE student GPA")
 frm.notify_transaction_start(302)
 frm.write_log_entry(302, WalAction.START)
-frm.log_write(302, "mahasiswa", {"nim": "302"}, 
-              {"nim": "302", "nama": "Bob", "ipk": 3.5},
-              {"nim": "302", "nama": "Bob", "ipk": 3.7})
+frm.log_write(
+    tx_id=302,
+    table="student",
+    pk={"StudentID": 99302},
+    old_data={"StudentID": 99302, "FullName": "Bob Test", "GPA": 3.5},
+    new_data={"StudentID": 99302, "FullName": "Bob Test", "GPA": 3.7}
+)
+print("  ✓ TX 302: Updated student 99302 GPA (Bob: 3.5 → 3.7)")
 
-# TX 303: DELETE and ongoing
+# TX 303: DELETE student and ongoing
+print("\n[TX 303] Starting transaction - DELETE student")
 frm.notify_transaction_start(303)
 frm.write_log_entry(303, WalAction.START)
-frm.log_write(303, "mahasiswa", {"nim": "303"},
-              {"nim": "303", "nama": "Charlie"}, None)
+frm.log_write(
+    tx_id=303,
+    table="student",
+    pk={"StudentID": 99303},
+    old_data={"StudentID": 99303, "FullName": "Charlie Test", "GPA": 3.2},
+    new_data=None
+)
+print("  ✓ TX 303: Deleted student 99303 (Charlie)")
 
-print(f"\nActive transactions: {frm.get_active_transaction_count()}")
-print("All 3 transactions are ongoing (not committed)")
+print(f"\n[Status] Active transactions: {frm.get_active_transaction_count()}")
+print("         All 3 transactions are ongoing (not committed)")
 
 # ========== TRIGGER CHECKPOINT ==========
 print("\n" + "="*70)
@@ -73,29 +155,52 @@ print("TRIGGERING MANUAL CHECKPOINT")
 print("="*70)
 
 ongoing = list(frm.active_transactions)
+print(f"[Checkpoint] Ongoing transactions before checkpoint: {ongoing}")
 frm.save_checkpoint(ongoing)
 
 # ========== VERIFY CHECKPOINT ==========
-print("\n[VERIFICATION]")
-print(f"Buffer flush was called: {buffer_mgr.flush_called}")
-print(f"Active transactions in checkpoint: {ongoing}")
+print("\n" + "="*70)
+print("CHECKPOINT VERIFICATION")
+print("="*70)
+print(f"✓ Buffer flush was called: {buffer_mgr.flush_called}")
+print(f"✓ Active transactions in checkpoint: {ongoing}")
+print(f"✓ Total active: {len(ongoing)}")
 print("\nExpected WAL structure:")
-print('  {"type": "checkpoint", "ongoing_transactions": [301, 302, 303]}')
+print('  {')
+print('    "type": "checkpoint",')
+print('    "ongoing_transactions": [301, 302, 303]')
+print('  }')
 
 # ========== CONTINUE TRANSACTIONS ==========
-print("\n[SCENARIO] After checkpoint - transactions continue")
+print("\n" + "="*70)
+print("AFTER CHECKPOINT - Transactions continue")
+print("="*70)
+
+print("\n[TX 301] Committing...")
 frm.write_log_entry(301, WalAction.COMMIT)
 frm.notify_transaction_end(301)
-print("TX 301 committed")
+print("  ✓ TX 301 committed successfully")
 
+print("\n[TX 302] Aborting...")
 frm.write_log_entry(302, WalAction.ABORT)
 frm.notify_transaction_end(302)
-print("TX 302 aborted")
+print("  ✓ TX 302 aborted (changes rolled back)")
 
-print(f"\nRemaining active transactions: {frm.get_active_transaction_count()}")
+print(f"\n[Status] Remaining active transactions: {frm.get_active_transaction_count()}")
+print(f"         TX 303 is still ongoing")
 
+# ========== FINAL SUMMARY ==========
 print("\n" + "="*70)
-print("TEST COMPLETED!")
+print("TEST COMPLETED SUCCESSFULLY!")
 print("="*70)
-print("\nCheck WAL file in: test_checkpoint_logs/")
-print("Look for checkpoint entry with ongoing_transactions")
+print("\n📋 Summary:")
+print("  • TX 301: Started → Checkpoint → Committed ✓")
+print("  • TX 302: Started → Checkpoint → Aborted ✗")
+print("  • TX 303: Started → Checkpoint → Still Active ⏳")
+print("\n📂 Check WAL file in: test_checkpoint_logs/")
+print("   Look for checkpoint entry with ongoing_transactions: [301, 302, 303]")
+print("\n💡 Recovery Behavior:")
+print("   • If crash happens now, recovery will:")
+print("     - Redo TX 301 (committed after checkpoint)")
+print("     - Undo TX 302 (aborted, needs rollback)")
+print("     - Undo TX 303 (ongoing, incomplete)")

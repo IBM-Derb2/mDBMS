@@ -3,6 +3,7 @@ Test FailureRecoveryManager - log_write functionality
 """
 import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from failure_recovery_manager import FailureRecoveryManager
