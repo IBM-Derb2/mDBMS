@@ -1,15 +1,6 @@
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-
-
-class OperationType(Enum):
-    """Type of operation in undo log."""
-
-    INSERT = "insert"
-    UPDATE = "update"
-    DELETE = "delete"
 
 
 @dataclass
@@ -17,7 +8,7 @@ class UndoLogEntry:
     """Single entry in the undo log."""
 
     transaction_id: int
-    operation_type: OperationType
+    operation_type: str  # "read" or "write" - same as Operation.operation_type
     object_id: str
     old_value: Any  # Previous value before operation
     new_value: Any  # New value after operation
@@ -25,7 +16,7 @@ class UndoLogEntry:
 
     def __repr__(self):
         return (
-            f"UndoLog(TX={self.transaction_id}, op={self.operation_type.value}, "
+            f"UndoLog(TX={self.transaction_id}, op={self.operation_type}, "
             f"obj={self.object_id}, old={self.old_value}, new={self.new_value})"
         )
 
@@ -45,7 +36,7 @@ class UndoLogManager:
         self.undo_logs: Dict[int, List[UndoLogEntry]] = {}
         self.total_logged_operations = 0
         self.total_rollbacks = 0
-        self.storage_manager = None  # NEW: Will be set by CCM
+        self.storage_manager = None  # Will be set by CCM if needed
 
     def set_storage_manager(self, storage_manager):
         """Set storage manager reference for actual rollback operations."""
@@ -54,7 +45,7 @@ class UndoLogManager:
     def log_operation(
         self,
         transaction_id: int,
-        operation_type: OperationType,
+        operation_type: str,
         object_id: str,
         old_value: Any,
         new_value: Any,
@@ -75,7 +66,7 @@ class UndoLogManager:
         self.total_logged_operations += 1
 
     def rollback_transaction(self, transaction_id: int) -> List[UndoLogEntry]:
-        """Rollback all operations for a transaction."""
+        """Rollback all operations for a transaction. Returns list of rolled back entries."""
         if transaction_id not in self.undo_logs:
             return []
 
@@ -96,21 +87,14 @@ class UndoLogManager:
             self.storage_manager.write_block(
                 object_id=entry.object_id,
                 old_value=entry.old_value,
-                operation_type=entry.operation_type.value,
+                operation_type=entry.operation_type,
                 transaction_id=entry.transaction_id,
             )
         else:
-            print(
-                f"[UndoLog] WARNING: No storage manager set, rollback simulated only"
-            )
+            print(f"[UndoLog] WARNING: No storage manager set, rollback simulated only")
 
-    def commit_transaction(self, transaction_id: int):
-        """Clean up undo logs after successful commit."""
-        if transaction_id in self.undo_logs:
-            del self.undo_logs[transaction_id]
-
-    def abort_transaction(self, transaction_id: int):
-        """Clean up undo logs after transaction abort (after rollback completed)."""
+    def clear_transaction(self, transaction_id: int):
+        """Clear undo logs for a transaction (called after commit or abort completion)."""
         if transaction_id in self.undo_logs:
             del self.undo_logs[transaction_id]
 
@@ -121,8 +105,7 @@ class UndoLogManager:
     def has_logs(self, transaction_id: int) -> bool:
         """Check if transaction has any undo logs."""
         return (
-            transaction_id in self.undo_logs
-            and len(self.undo_logs[transaction_id]) > 0
+            transaction_id in self.undo_logs and len(self.undo_logs[transaction_id]) > 0
         )
 
     def get_statistics(self) -> Dict[str, Any]:

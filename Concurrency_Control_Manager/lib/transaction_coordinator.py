@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from .transaction_model import TransactionManager, TransactionStatus, Transaction
 from .strategy_interface import ConcurrencyStrategy, Response
-from .end_transaction import EndTransactionManager, EndTransactionResult
+from .end_transaction import EndTransactionManager, EndTransactionReport
 
 
 class TransactionCoordinator:
@@ -60,8 +60,8 @@ class TransactionCoordinator:
 
     def commit(self, transaction_id: int):
         report = self.end_tx_manager.end_transaction(transaction_id, is_commit=True)
-        if report.result != EndTransactionResult.SUCCESS:
-            raise Exception(f"Commit failed: {report.validation_errors}")
+        if not report.success:
+            raise Exception(f"Commit failed: {report.messages}")
 
     def abort(self, transaction_id: int, reason: str = "User requested"):
         self.end_tx_manager.end_transaction(transaction_id, is_commit=False)

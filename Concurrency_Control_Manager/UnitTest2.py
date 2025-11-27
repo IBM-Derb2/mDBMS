@@ -12,7 +12,7 @@ from lib.lock_based_strategy import LockBasedStrategy
 from lib.timestamp_based_strategy import TimestampBasedStrategy
 from lib.validation_based_strategy import ValidationBasedStrategy
 from lib.multi_version_strategy import MultiVersionStrategy
-from lib.end_transaction import EndTransactionManager, EndTransactionResult
+from lib.end_transaction import EndTransactionManager, EndTransactionReport
 from lib.transaction_coordinator import TransactionCoordinator
 
 # Import CCM - need to handle relative imports

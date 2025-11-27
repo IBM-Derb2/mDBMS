@@ -5,7 +5,6 @@ from unittest.mock import patch, MagicMock
 
 from classes import ConcurrencyControlManager
 from lib.transaction_model import TransactionStatus
-from lib.undo_log import OperationType
 
 
 class TestMilestone3(unittest.TestCase):
@@ -29,24 +28,24 @@ class TestMilestone3(unittest.TestCase):
         """
         Test that abort_transaction triggers rollback and calls mock storage's write_block.
         """
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("TEST 1: Rollback with Mock Storage")
-        print("="*70)
+        print("=" * 70)
 
         # Start transaction T1
         tx1 = self.ccm.begin_transaction()
         print(f"Started transaction T1={tx1}")
 
-        # Manually log an UPDATE operation to undo log
+        # Manually log a WRITE operation to undo log
         # (Normally this would be called by Storage Manager during write)
         self.ccm.undo_log_manager.log_operation(
             transaction_id=tx1,
-            operation_type=OperationType.UPDATE,
+            operation_type="write",
             object_id="X",
             old_value="ValueBefore",
-            new_value="ValueAfter"
+            new_value="ValueAfter",
         )
-        print(f"Logged UPDATE operation: X = 'ValueAfter' (old='ValueBefore')")
+        print(f"Logged WRITE operation: X = 'ValueAfter' (old='ValueBefore')")
 
         # Check that undo log has entry
         self.assertTrue(self.ccm.undo_log_manager.has_logs(tx1))
@@ -56,7 +55,7 @@ class TestMilestone3(unittest.TestCase):
         initial_history_count = len(self.ccm.mock_storage.get_write_history())
 
         # Capture console output to verify write_block was called
-        with patch('sys.stdout', new=StringIO()) as fake_out:
+        with patch("sys.stdout", new=StringIO()) as fake_out:
             # Abort transaction T1
             self.ccm.abort_transaction(tx1, reason="Test abort")
             output = fake_out.getvalue()
@@ -71,7 +70,15 @@ class TestMilestone3(unittest.TestCase):
 
         # Verify transaction status is TERMINATED (not ABORTED in your implementation)
         tx_status = self.ccm.get_transaction_status(tx1)
-        self.assertIn(tx_status, [TransactionStatus.ABORTED.value, TransactionStatus.TERMINATED.value, "terminated", "aborted"])
+        self.assertIn(
+            tx_status,
+            [
+                TransactionStatus.ABORTED.value,
+                TransactionStatus.TERMINATED.value,
+                "terminated",
+                "aborted",
+            ],
+        )
         print(f"Transaction T1 status: {tx_status}")
 
         # Verify undo log was cleared (should be cleaned up after abort)
@@ -83,7 +90,9 @@ class TestMilestone3(unittest.TestCase):
         # Verify mock storage write history increased
         write_history = self.ccm.mock_storage.get_write_history()
         self.assertGreater(len(write_history), initial_history_count)
-        print(f"Mock storage write history length: {len(write_history)} (increased from {initial_history_count})")
+        print(
+            f"Mock storage write history length: {len(write_history)} (increased from {initial_history_count})"
+        )
 
         print("\n✓ TEST 1 PASSED: Rollback successfully triggered mock storage write")
 
@@ -94,9 +103,9 @@ class TestMilestone3(unittest.TestCase):
         """
         Test Wait-Die: Younger transaction should die (raise Exception) when conflicting with older.
         """
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("TEST 2: Wait-Die Logic - Younger Transaction Dies")
-        print("="*70)
+        print("=" * 70)
 
         # Set strategy to lock-based with wait-die
         self.ccm.set_concurrency_mechanism("lock-based")
@@ -106,7 +115,7 @@ class TestMilestone3(unittest.TestCase):
         # T1 (older, ID=1) acquires READ lock on 'A'
         tx1 = self.ccm.begin_transaction()
         print(f"Started T1={tx1} (older)")
-        self.ccm.log_object('A', tx1, 'read')
+        self.ccm.log_object("A", tx1, "read")
         print(f"T1 acquired READ lock on 'A'")
 
         # T2 (younger, ID=2) tries to acquire WRITE lock on 'A'
@@ -115,9 +124,9 @@ class TestMilestone3(unittest.TestCase):
 
         # T2 should die (raise Exception) because it's younger
         print(f"T2 attempting WRITE on 'A' (should die)...")
-        
+
         with self.assertRaises(Exception) as context:
-            self.ccm.log_object('A', tx2, 'write')
+            self.ccm.log_object("A", tx2, "write")
 
         print(f"✓ Exception raised: {str(context.exception)}")
         self.assertIn("Wait-Die", str(context.exception))
@@ -137,9 +146,9 @@ class TestMilestone3(unittest.TestCase):
         """
         Test Wound-Wait: Older transaction should wound (abort) younger transaction.
         """
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("TEST 3: Wound-Wait Logic - Older Wounds Younger")
-        print("="*70)
+        print("=" * 70)
 
         # Set strategy to lock-based with wound-wait
         self.ccm.set_concurrency_mechanism("lock-based")
@@ -155,7 +164,7 @@ class TestMilestone3(unittest.TestCase):
         print(f"Started T2={tx2} (younger)")
 
         # T2 acquires READ lock on 'B'
-        self.ccm.log_object('B', tx2, 'read')
+        self.ccm.log_object("B", tx2, "read")
         print(f"T2 acquired READ lock on 'B'")
 
         # Verify T2 is ACTIVE
@@ -169,26 +178,28 @@ class TestMilestone3(unittest.TestCase):
 
         # T1 (older) tries to acquire WRITE lock on 'B'
         print(f"T1 attempting WRITE on 'B' (should wound T2)...")
-        
+
         # This should trigger wound-wait logic: T2 gets aborted
-        response = self.ccm.validate_object('B', tx1, 'write')
-        
+        response = self.ccm.validate_object("B", tx1, "write")
+
         print(f"Validation response for T1: allowed={response.allowed}")
 
         # Verify T2 was wounded (aborted/terminated)
         tx2_status_after = self.ccm.get_transaction_status(tx2)
         print(f"T2 status after wound: {tx2_status_after}")
-        
+
         # T2 should be ABORTED or TERMINATED
         self.assertIn(tx2_status_after.lower(), ["aborted", "terminated"])
-        
+
         # T1 should be allowed to proceed after wounding
         self.assertTrue(response.allowed, "T1 should be allowed after wounding T2")
         tx1_status = self.ccm.get_transaction_status(tx1)
         print(f"T1 status: {tx1_status}")
         self.assertEqual(tx1_status, TransactionStatus.ACTIVE.value)
 
-        print("\n✓ TEST 3 PASSED: Older transaction successfully wounded younger in Wound-Wait")
+        print(
+            "\n✓ TEST 3 PASSED: Older transaction successfully wounded younger in Wound-Wait"
+        )
 
     # ========================================================================
     # ADDITIONAL TEST: Mock Storage Integration
@@ -197,9 +208,9 @@ class TestMilestone3(unittest.TestCase):
         """
         Test that mock storage is properly integrated with undo log manager.
         """
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("BONUS TEST: Mock Storage Integration")
-        print("="*70)
+        print("=" * 70)
 
         # Verify mock storage is set
         self.assertIsNotNone(self.ccm.mock_storage)
@@ -207,50 +218,49 @@ class TestMilestone3(unittest.TestCase):
         print("✓ Mock storage properly initialized")
 
         # Verify they're the same instance
-        self.assertIs(
-            self.ccm.undo_log_manager.storage_manager,
-            self.ccm.mock_storage
-        )
+        self.assertIs(self.ccm.undo_log_manager.storage_manager, self.ccm.mock_storage)
         print("✓ Undo log manager connected to mock storage")
 
         # Test write_block method exists and works
         self.ccm.mock_storage.write_block(
             object_id="TestObj",
             old_value="OldVal",
-            operation_type="UPDATE",
-            transaction_id=999
+            operation_type="write",
+            transaction_id=999,
         )
-        
+
         write_history = self.ccm.mock_storage.get_write_history()
         self.assertGreater(len(write_history), 0)
-        print(f"✓ Mock storage write_block functional (history: {len(write_history)} entries)")
+        print(
+            f"✓ Mock storage write_block functional (history: {len(write_history)} entries)"
+        )
 
         print("\n✓ BONUS TEST PASSED: Mock storage integration verified")
 
 
 def run_tests():
     """Run all milestone 3 tests."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("MILESTONE 3 UNIT TESTS")
     print("Testing: Rollback + Mock Storage + Deadlock Prevention Logic")
-    print("="*70)
+    print("=" * 70)
 
     # Create test suite
     suite = unittest.TestLoader().loadTestsFromTestCase(TestMilestone3)
-    
+
     # Run tests with verbose output
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
     # Print summary
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST SUMMARY")
-    print("="*70)
+    print("=" * 70)
     print(f"Tests run: {result.testsRun}")
     print(f"Successes: {result.testsRun - len(result.failures) - len(result.errors)}")
     print(f"Failures: {len(result.failures)}")
     print(f"Errors: {len(result.errors)}")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     return result.wasSuccessful()
 
