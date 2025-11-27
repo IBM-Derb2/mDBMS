@@ -3,8 +3,9 @@ Utility functions for query tree manipulation and analysis
 """
 
 from typing import List, Set, Dict, Optional
-from Query_Optimizer.query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from globalsy.constants.query_types import QueryTypes
+from globalsy.constants.query_operators import QueryOperators
 
 
 class TreeAnalyzer:
@@ -88,7 +89,7 @@ class TreeAnalyzer:
 
         # Look for column references
         if tree.type in [QueryTypes.COLUMN, QueryTypes.IDENTIFIER]:
-            if tree.val and tree.val != '*':
+            if tree.val and tree.val != QueryOperators.MULTIPLY:
                 columns.add(tree.val)
 
         for child in tree.childs:
@@ -254,7 +255,7 @@ class ConditionAnalyzer:
             if len(node.childs) >= 2:
                 left = node.childs[0].val if node.childs[0] else None
                 right = node.childs[1].val if len(node.childs) > 1 else None
-                operator = node.val if node.val else '='
+                operator = node.val if node.val else QueryOperators.EQ
 
                 # Extract tables from qualified names (e.g., 'users.id' -> 'users')
                 tables = set()
@@ -273,7 +274,7 @@ class ConditionAnalyzer:
                 }
 
         # Simple parsing from node value if it contains operators
-        if node.val and any(op in node.val for op in ['=', '>', '<', '>=', '<=', '!=', 'LIKE']):
+        if node.val and any(op in node.val for op in [QueryOperators.EQ, QueryOperators.GT, QueryOperators.LT, QueryOperators.GTE, QueryOperators.LTE, QueryOperators.NEQ, QueryOperators.LIKE]):
             tables = set()
             for part in node.val.split():
                 if '.' in part:
@@ -363,9 +364,9 @@ class CostEstimator:
 
         if operator == '=':
             return 0.1  # Equality is highly selective
-        elif operator in ['<', '>', '<=', '>=']:
+        elif operator in [QueryOperators.GT, QueryOperators.LT, QueryOperators.GTE, QueryOperators.LTE]:
             return 0.33  # Range queries are moderately selective
-        elif operator in ['LIKE', 'IN']:
+        elif operator in [QueryOperators.LIKE, QueryOperators.IN]:
             return 0.5  # Pattern matching varies
         else:
             return 0.5  # Default
@@ -383,11 +384,11 @@ class CostEstimator:
         Returns:
             Estimated result size
         """
-        if operation == 'select':
+        if operation == QueryTypes.SELECT:
             return int(input_size * selectivity)
-        elif operation == 'project':
+        elif operation == QueryTypes.PROJECT:
             return input_size  # Projection doesn't change row count
-        elif operation == 'join':
+        elif operation == QueryTypes.JOIN:
             # Simplified join size estimation
             return int(input_size * selectivity * 10)  # Rough estimate
         else:
