@@ -3,7 +3,7 @@ DDL Parser
 Handles parsing of DDL statements: CREATE, DROP, and transaction commands.
 """
 
-from ...types import QueryTree
+from ...query_types import QueryTree
 from .base_parser import BaseParser
 
 

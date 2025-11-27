@@ -33,16 +33,17 @@ def main():
             if not query:
                 continue
 
-            result = qp.execute_query(query)
+            results = qp.execute_query(query)
 
             print("\n--- Query Result ---")
-            print(f"  Message: {result.message}")
-            print(f"  TID: {result.transaction_id}")
-            print(f"  Rows Affected/Returned: {result.rows_count}")
-            if result.data and result.data.data:
-                print("  Data:")
-                for row in result.data.data:
-                    print(f"    {row}")
+            for result in results:
+                print(f"  Message: {result.message}")
+                print(f"  TID: {result.transaction_id}")
+                print(f"  Rows Affected/Returned: {result.rows_count}")
+                if result.data and result.data.data:
+                    print("  Data:")
+                    for row in result.data.data:
+                        print(f"    {row}")
             print("--------------------\n")
 
         except Exception as e:
