@@ -4,6 +4,7 @@ Handles parsing of SQL expressions including arithmetic, comparisons, and logica
 """
 
 from ...query_types import QueryTree
+from globalsy.constants.query_types import QueryTypes
 from .base_parser import BaseParser
 
 
@@ -21,7 +22,8 @@ class ExpressionParser(BaseParser):
         while self._match_keyword('OR'):
             self._advance()
             right = self._parse_and_expression()
-            left = QueryTree(type='OPERATOR', val='OR', childs=[left, right])
+            left = QueryTree(type=QueryTypes.OPERATOR,
+                             val='OR', childs=[left, right])
 
         return left
 
@@ -32,7 +34,8 @@ class ExpressionParser(BaseParser):
         while self._match_keyword('AND'):
             self._advance()
             right = self._parse_not_expression()
-            left = QueryTree(type='OPERATOR', val='AND', childs=[left, right])
+            left = QueryTree(type=QueryTypes.OPERATOR,
+                             val='AND', childs=[left, right])
 
         return left
 
@@ -41,7 +44,7 @@ class ExpressionParser(BaseParser):
         if self._match_keyword('NOT'):
             self._advance()
             operand = self._parse_comparison_expression()
-            return QueryTree(type='OPERATOR', val='NOT', childs=[operand])
+            return QueryTree(type=QueryTypes.OPERATOR, val='NOT', childs=[operand])
         else:
             return self._parse_comparison_expression()
 
@@ -57,13 +60,13 @@ class ExpressionParser(BaseParser):
             op = self.current_token.value
             self._advance()
             right = self._parse_additive_expression()
-            return QueryTree(type='OPERATOR', val=op, childs=[left, right])
+            return QueryTree(type=QueryTypes.OPERATOR, val=op, childs=[left, right])
 
         # Handle LIKE operator
         if self._match_keyword('LIKE'):
             self._advance()
             right = self._parse_additive_expression()
-            return QueryTree(type='OPERATOR', val='LIKE', childs=[left, right])
+            return QueryTree(type=QueryTypes.OPERATOR, val='LIKE', childs=[left, right])
 
         # Handle IN operator
         if self._match_keyword('IN'):
@@ -87,7 +90,7 @@ class ExpressionParser(BaseParser):
                 raise ValueError("Expected ')' after IN list")
             self._advance()
 
-            return QueryTree(type='OPERATOR', val='IN', childs=[left] + values)
+            return QueryTree(type=QueryTypes.OPERATOR, val='IN', childs=[left] + values)
 
         # Handle BETWEEN operator
         if self._match_keyword('BETWEEN'):
@@ -97,7 +100,7 @@ class ExpressionParser(BaseParser):
                 raise ValueError("Expected 'AND' in BETWEEN clause")
             self._advance()
             upper = self._parse_additive_expression()
-            return QueryTree(type='OPERATOR', val='BETWEEN', childs=[left, lower, upper])
+            return QueryTree(type=QueryTypes.OPERATOR, val='BETWEEN', childs=[left, lower, upper])
 
         return left
 
@@ -109,7 +112,8 @@ class ExpressionParser(BaseParser):
             op = self.current_token.value
             self._advance()
             right = self._parse_multiplicative_expression()
-            left = QueryTree(type='OPERATOR', val=op, childs=[left, right])
+            left = QueryTree(type=QueryTypes.OPERATOR,
+                             val=op, childs=[left, right])
 
         return left
 
@@ -121,7 +125,8 @@ class ExpressionParser(BaseParser):
             op = self.current_token.value
             self._advance()
             right = self._parse_primary_expression()
-            left = QueryTree(type='OPERATOR', val=op, childs=[left, right])
+            left = QueryTree(type=QueryTypes.OPERATOR,
+                             val=op, childs=[left, right])
 
         return left
 
@@ -131,7 +136,7 @@ class ExpressionParser(BaseParser):
         if self._match_operator('-'):
             self._advance()
             expr = self._parse_primary_expression()
-            return QueryTree(type='OPERATOR', val='-', childs=[expr])
+            return QueryTree(type=QueryTypes.OPERATOR, val='-', childs=[expr])
 
         # Parentheses
         if self._match_punctuation('('):
@@ -144,13 +149,13 @@ class ExpressionParser(BaseParser):
         if self.current_token.type == 'STRING':
             val = self.current_token.value
             self._advance()
-            return QueryTree(type='LITERAL', val=f"'{val}'")
+            return QueryTree(type=QueryTypes.LITERAL, val=f"'{val}'")
 
         # Number literal
         if self.current_token.type == 'NUMBER':
             val = self.current_token.value
             self._advance()
-            return QueryTree(type='LITERAL', val=val)
+            return QueryTree(type=QueryTypes.LITERAL, val=val)
 
         # Identifier (column reference, possibly with table prefix)
         if self.current_token.type == 'IDENTIFIER' or self.current_token.value == '*':
@@ -165,9 +170,9 @@ class ExpressionParser(BaseParser):
                         f"Expected column name after '.', got '{self.current_token.value}'")
                 column = self.current_token.value
                 self._advance()
-                return QueryTree(type='COLUMN', val=f"{identifier}.{column}")
+                return QueryTree(type=QueryTypes.COLUMN, val=f"{identifier}.{column}")
 
-            return QueryTree(type='COLUMN', val=identifier)
+            return QueryTree(type=QueryTypes.COLUMN, val=identifier)
 
         raise ValueError(
             f"Unexpected token in expression: {self.current_token.value}")

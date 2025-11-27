@@ -4,6 +4,7 @@ Breaks SQL query strings into tokens for parsing.
 """
 
 from typing import List, Optional
+from globalsy.constants.query_types import QueryTypes
 import logging
 
 
@@ -23,17 +24,17 @@ class SQLTokenizer:
     """Tokenizes SQL query strings"""
 
     KEYWORDS = {
-        'SELECT', 'FROM', 'WHERE',
-        'INSERT', 'INTO', 'VALUES',
-        'UPDATE',
-        'DELETE', 'SET',
+        QueryTypes.SELECT, QueryTypes.FROM, QueryTypes.WHERE,
+        QueryTypes.INSERT, QueryTypes.INTO, QueryTypes.VALUES,
+        QueryTypes.UPDATE,
+        QueryTypes.DELETE, QueryTypes.SET,
 
-        'CREATE', 'TABLE', 'DROP',
+        QueryTypes.CREATE, QueryTypes.TABLE, QueryTypes.DROP,
 
-        'JOIN', 'INNER', 'NATURAL',
-        'ON', 'AS', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
-        'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
-        'GROUP', 'HAVING', 'DISTINCT', 'ALL', 'UNION', 'INTERSECT', 'EXCEPT',
+        QueryTypes.JOIN, 'INNER', 'NATURAL',
+        QueryTypes.ON, QueryTypes.AS, 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
+        QueryTypes.ORDER, QueryTypes.BY, QueryTypes.ASC, QueryTypes.DESC, QueryTypes.LIMIT, QueryTypes.OFFSET,
+        QueryTypes.GROUP, QueryTypes.HAVING, QueryTypes.DISTINCT, QueryTypes.ALL, QueryTypes.UNION, QueryTypes.INTERSECT, QueryTypes.EXCEPT,
         'BEGIN', 'COMMIT', 'ROLLBACK', 'TRANSACTION',
         'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'CONSTRAINT',
         'INT', 'FLOAT', 'CHAR',
@@ -234,6 +235,8 @@ class SQLTokenizer:
         # Check if it's a keyword
         upper_value = value.upper()
         if upper_value in self.KEYWORDS:
-            return SQLToken('KEYWORD', upper_value, start_pos)
+            # Use QueryTypes constant if available
+            qt_value = getattr(QueryTypes, upper_value, upper_value)
+            return SQLToken('KEYWORD', qt_value, start_pos)
 
         return SQLToken('IDENTIFIER', value, start_pos)

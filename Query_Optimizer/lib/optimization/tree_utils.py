@@ -4,6 +4,7 @@ Utility functions for query tree manipulation and analysis
 
 from typing import List, Set, Dict, Optional
 from Query_Optimizer.query_types import QueryTree
+from globalsy.constants.query_types import QueryTypes
 
 
 class TreeAnalyzer:
@@ -63,7 +64,7 @@ class TreeAnalyzer:
         tables = set()
 
         # Look for FROM, JOIN nodes
-        if tree.type in ['FROM', 'JOIN', 'TABLE']:
+        if tree.type in [QueryTypes.FROM, QueryTypes.JOIN, QueryTypes.TABLE]:
             if tree.val:
                 tables.add(tree.val)
 
@@ -86,7 +87,7 @@ class TreeAnalyzer:
         columns = set()
 
         # Look for column references
-        if tree.type in ['COLUMN', 'IDENTIFIER']:
+        if tree.type in [QueryTypes.COLUMN, QueryTypes.IDENTIFIER]:
             if tree.val and tree.val != '*':
                 columns.add(tree.val)
 
@@ -107,9 +108,9 @@ class TreeAnalyzer:
             True if subquery exists
         """
         # Look for nested SELECT nodes
-        if tree.type == 'SELECT' and tree.parent is not None:
+        if tree.type == QueryTypes.SELECT and tree.parent is not None:
             parent = tree.parent
-            if parent.type in ['FROM', 'WHERE', 'JOIN']:
+            if parent.type in [QueryTypes.FROM, QueryTypes.WHERE, QueryTypes.JOIN]:
                 return True
 
         return any(TreeAnalyzer.has_subquery(child) for child in tree.childs)
@@ -225,7 +226,7 @@ class ConditionAnalyzer:
         conditions = []
 
         # Look for WHERE, ON nodes
-        if tree.type in ['WHERE', 'ON', 'CONDITION']:
+        if tree.type in [QueryTypes.WHERE, QueryTypes.ON, QueryTypes.CONDITION]:
             condition = ConditionAnalyzer._parse_condition(tree)
             if condition:
                 conditions.append(condition)
@@ -248,7 +249,7 @@ class ConditionAnalyzer:
             return None
 
         # Check for COMPARISON type nodes
-        if node.type == 'COMPARISON':
+        if node.type == QueryTypes.COMPARISON:
             # Extract operator, left, right from children
             if len(node.childs) >= 2:
                 left = node.childs[0].val if node.childs[0] else None
@@ -396,12 +397,12 @@ class CostEstimator:
 # Convenience functions
 def find_all_joins(tree: QueryTree) -> List[QueryTree]:
     """Find all JOIN nodes in the tree"""
-    return TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+    return TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
 
 def find_all_selections(tree: QueryTree) -> List[QueryTree]:
     """Find all WHERE/selection nodes in the tree"""
-    return TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+    return TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
 
 def get_all_tables(tree: QueryTree) -> Set[str]:

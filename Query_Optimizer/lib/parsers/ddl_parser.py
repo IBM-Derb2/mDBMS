@@ -4,6 +4,7 @@ Handles parsing of DDL statements: CREATE, DROP, and transaction commands.
 """
 
 from ...query_types import QueryTree
+from globalsy.constants.query_types import QueryTypes
 from .base_parser import BaseParser
 
 
@@ -22,14 +23,14 @@ class DDLParser(BaseParser):
         table_name = self.current_token.value
         self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Parse column definitions
         self._expect_punctuation('(')
         columns_node = self._parse_column_definitions()
         self._expect_punctuation(')')
 
-        return QueryTree(type='CREATE_TABLE', val='CREATE_TABLE', childs=[table_node, columns_node])
+        return QueryTree(type=QueryTypes.CREATE_TABLE, val=QueryTypes.CREATE_TABLE, childs=[table_node, columns_node])
 
     def _parse_foreign_key_constraint(self) -> QueryTree:
         self._expect_keyword('FOREIGN')
@@ -135,23 +136,23 @@ class DDLParser(BaseParser):
                         self._advance()
                         self._expect_keyword('KEY')
                         constraints.append(
-                            QueryTree(type='CONSTRAINT', val='PRIMARY_KEY'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='PRIMARY_KEY'))
                     elif self._match_keyword('UNIQUE'):
                         self._advance()
                         constraints.append(
-                            QueryTree(type='CONSTRAINT', val='UNIQUE'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='UNIQUE'))
                     elif self._match_keyword('NOT'):
                         self._advance()
                         self._expect_keyword('NULL')
                         constraints.append(
-                            QueryTree(type='CONSTRAINT', val='NOT_NULL'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='NOT_NULL'))
 
                 # Buat node
                 type_val = data_type if not size else f"{data_type}({size})"
-                type_node = QueryTree(type='DATA_TYPE', val=type_val)
+                type_node = QueryTree(type=QueryTypes.DATA_TYPE, val=type_val)
 
                 childs = [type_node] + constraints
-                col_def = QueryTree(type='COLUMN_DEF',
+                col_def = QueryTree(type=QueryTypes.COLUMN_DEF,
                                     val=col_name, childs=childs)
                 columns.append(col_def)
 
@@ -166,7 +167,7 @@ class DDLParser(BaseParser):
             else:
                 break
 
-        return QueryTree(type='COLUMN_DEFS', val='', childs=columns)
+        return QueryTree(type=QueryTypes.COLUMN_DEFS, val='', childs=columns)
 
     def parse_drop(self) -> QueryTree:
         """Parse DROP TABLE statement"""
@@ -180,22 +181,22 @@ class DDLParser(BaseParser):
         table_name = self.current_token.value
         self._advance()
 
-        table_node = QueryTree(type='TABLE', val=table_name)
+        table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
 
         # Check for CASCADE or RESTRICT
         mode = None
         if self._match_keyword('CASCADE'):
             self._advance()
-            mode = QueryTree(type='DROP_MODE', val='CASCADE')
+            mode = QueryTree(type=QueryTypes.DROP_MODE, val='CASCADE')
         elif self._match_keyword('RESTRICT'):
             self._advance()
-            mode = QueryTree(type='DROP_MODE', val='RESTRICT')
+            mode = QueryTree(type=QueryTypes.DROP_MODE, val='RESTRICT')
 
         childs = [table_node]
         if mode:
             childs.append(mode)
 
-        return QueryTree(type='DROP_TABLE', val='DROP_TABLE', childs=childs)
+        return QueryTree(type=QueryTypes.DROP_TABLE, val=QueryTypes.DROP_TABLE, childs=childs)
 
     def parse_begin_transaction(self) -> QueryTree:
         """Parse BEGIN TRANSACTION"""
@@ -205,9 +206,9 @@ class DDLParser(BaseParser):
         if self._match_keyword('TRANSACTION'):
             self._advance()
 
-        return QueryTree(type='BEGIN_TRANSACTION', val='BEGIN_TRANSACTION')
+        return QueryTree(type=QueryTypes.BEGIN_TRANSACTION, val=QueryTypes.BEGIN_TRANSACTION)
 
     def parse_commit(self) -> QueryTree:
         """Parse COMMIT"""
         self._expect_keyword('COMMIT')
-        return QueryTree(type='COMMIT', val='COMMIT')
+        return QueryTree(type=QueryTypes.COMMIT, val=QueryTypes.COMMIT)

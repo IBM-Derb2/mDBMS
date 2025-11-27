@@ -6,6 +6,7 @@ This allows the optimizer to show measurable improvements.
 """
 
 from ...query_types import QueryTree
+from globalsy.constants.query_types import QueryTypes
 from .statistics import get_statistics_manager
 
 
@@ -18,18 +19,18 @@ def calculate_node_cost_with_stats(node: QueryTree, estimated_rows: int = None) 
     """
     stats_mgr = get_statistics_manager()
 
-    if node.type == 'SELECT':
+    if node.type == QueryTypes.SELECT:
         # Calculate FROM clause first to get base row count
         from_cost, from_rows = 0, 1000
         for child in node.childs:
-            if child.type == 'FROM':
+            if child.type == QueryTypes.FROM:
                 from_cost, from_rows = calculate_node_cost_with_stats(child)
 
         # Calculate WHERE clause selectivity
         where_selectivity = 1.0
         where_cost = 0
         for child in node.childs:
-            if child.type == 'WHERE':
+            if child.type == QueryTypes.WHERE:
                 where_cost, where_selectivity = _estimate_where_selectivity(
                     child, stats_mgr)
 
@@ -42,27 +43,27 @@ def calculate_node_cost_with_stats(node: QueryTree, estimated_rows: int = None) 
 
         # Add costs for other clauses
         for child in node.childs:
-            if child.type not in ['FROM', 'WHERE']:
+            if child.type not in [QueryTypes.FROM, QueryTypes.WHERE]:
                 child_cost, _ = calculate_node_cost_with_stats(
                     child, result_rows)
                 total_cost += child_cost
 
         return total_cost, result_rows
 
-    elif node.type == 'FROM':
+    elif node.type == QueryTypes.FROM:
         return _calculate_from_cost(node, stats_mgr)
 
-    elif node.type == 'TABLE':
+    elif node.type == QueryTypes.TABLE:
         table_name = node.val
         row_count = stats_mgr.get_row_count(table_name)
         # Table scan cost = rows * cost_per_row
         table_cost = row_count * 5  # 5 units per row
         return table_cost, row_count
 
-    elif node.type == 'JOIN':
+    elif node.type == QueryTypes.JOIN:
         return _calculate_join_cost(node, stats_mgr)
 
-    elif node.type == 'OPERATOR':
+    elif node.type == QueryTypes.OPERATOR:
         # Operator cost depends on number of rows being processed
         rows = estimated_rows if estimated_rows else 1000
         op_cost = rows * 2  # 2 units per row for operator evaluation
@@ -94,7 +95,7 @@ def _calculate_from_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
     total_cost = 0
     total_rows = 1
 
-    has_join = any(child.type == 'JOIN' for child in node.childs)
+    has_join = any(child.type == QueryTypes.JOIN for child in node.childs)
 
     if has_join:
         # Explicit joins - process normally
@@ -111,11 +112,11 @@ def _calculate_from_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
 
         for child in node.childs:
             # Handle both direct TABLE nodes and ALIAS nodes with TABLE children
-            if child.type == 'TABLE':
+            if child.type == QueryTypes.TABLE:
                 cost, rows = calculate_node_cost_with_stats(child)
                 table_costs.append(cost)
                 table_rows.append(rows)
-            elif child.type == 'ALIAS' and child.childs and child.childs[0].type == 'TABLE':
+            elif child.type == 'ALIAS' and child.childs and child.childs[0].type == QueryTypes.TABLE:
                 # ALIAS node wrapping a TABLE
                 cost, rows = calculate_node_cost_with_stats(child.childs[0])
                 table_costs.append(cost)
@@ -225,7 +226,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
         return 0, 1.0
 
     # For AND conditions, use conjunction formula: multiply selectivities
-    if condition.type == 'OPERATOR' and condition.val == 'AND':
+    if condition.type == QueryTypes.OPERATOR and condition.val == 'AND':
         total_cost = 0
         selectivities = []
         for child in condition.childs:
@@ -239,7 +240,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
         return total_cost, total_selectivity
 
     # For OR conditions, use disjunction formula: 1 - (1-s1)*(1-s2)*...*(1-sn)
-    elif condition.type == 'OPERATOR' and condition.val == 'OR':
+    elif condition.type == QueryTypes.OPERATOR and condition.val == 'OR':
         total_cost = 0
         selectivities = []
         for child in condition.childs:
@@ -253,7 +254,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
         return total_cost, total_selectivity
 
     # For NOT conditions, use negation formula
-    elif condition.type == 'OPERATOR' and condition.val == 'NOT':
+    elif condition.type == QueryTypes.OPERATOR and condition.val == 'NOT':
         if condition.childs:
             cost, sel = _estimate_condition_selectivity(
                 condition.childs[0], stats_mgr)
@@ -268,7 +269,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
 
 def _estimate_condition_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]:
     """Estimate selectivity of a single condition using database theory"""
-    if node.type == 'OPERATOR' and node.val in ['=', '!=', '<', '<=', '>', '>=']:
+    if node.type == QueryTypes.OPERATOR and node.val in ['=', '!=', '<', '<=', '>', '>=']:
         # Simple comparison condition
         cost = 100  # Cost to evaluate condition
 
@@ -279,12 +280,12 @@ def _estimate_condition_selectivity(node: QueryTree, stats_mgr) -> tuple[int, fl
 
         # Try to find COLUMN node and LITERAL node
         for child in node.childs:
-            if child.type == 'COLUMN':
+            if child.type == QueryTypes.COLUMN:
                 column_name = child.val
                 # Try to infer table name from column's children or context
-                if child.childs and child.childs[0].type == 'TABLE':
+                if child.childs and child.childs[0].type == QueryTypes.TABLE:
                     table_name = child.childs[0].val
-            elif child.type == 'LITERAL':
+            elif child.type == QueryTypes.LITERAL:
                 value = child.val
 
         # If we found column info, use statistics-based estimation
