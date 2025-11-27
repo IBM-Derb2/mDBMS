@@ -1,0 +1,7 @@
+{"timestamp": "2025-11-27T19:06:42.315612", "transaction_id": 1, "action": "START"}
+{"timestamp": "2025-11-27T19:06:42.317416", "transaction_id": 1, "action": "WRITE", "table_name": "data", "pk_value": {"id": "X"}, "old_data": {"value": "ValueBefore"}, "new_data": {"value": "ValueAfter"}}
+{"timestamp": "2025-11-27T19:06:42.320208", "transaction_id": 1, "action": "ABORT"}
+{"timestamp": "2025-11-27T19:06:42.324471", "transaction_id": 1, "action": "START"}
+{"timestamp": "2025-11-27T19:06:42.325994", "transaction_id": 2, "action": "START"}
+{"timestamp": "2025-11-27T19:06:42.329916", "transaction_id": 1, "action": "START"}
+{"timestamp": "2025-11-27T19:06:42.336857", "transaction_id": 2, "action": "START"}

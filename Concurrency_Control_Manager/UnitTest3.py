@@ -63,8 +63,7 @@ class TestMilestone3(unittest.TestCase):
         print(f"Transaction T1 aborted")
         print(f"\nConsole output during abort:\n{output}")
 
-        # Verify that rollback was performed
-        self.assertIn("[UndoLog] Rolling back:", output)
+        # Verify that rollback was performed - check MockStorage was called
         self.assertIn("[MockStorage] ROLLBACK WRITE:", output)
         self.assertIn("ValueBefore", output)
 

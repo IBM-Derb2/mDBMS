@@ -10,6 +10,7 @@ from lib.transaction_coordinator import TransactionCoordinator
 from lib.deadlock_detector import DeadlockDetector
 from lib.transaction_id_generator import TransactionIdGenerator
 from lib.undo_log import UndoLogManager
+from lib.failure_recovery_adapter import FailureRecoveryAdapter
 from lib.mock_storage import MockStorageManager  # NEW import
 
 
@@ -30,9 +31,12 @@ class ConcurrencyControlManager:
             return
 
         self.tx_manager = TransactionManager()
-        self.undo_log_manager = UndoLogManager()
+        # Use FailureRecoveryAdapter instead of UndoLogManager for integration
+        self.undo_log_manager = FailureRecoveryAdapter(log_directory="logs")
         self.mock_storage = MockStorageManager()  # NEW: Initialize mock storage
-        self.undo_log_manager.set_storage_manager(self.mock_storage)  # NEW: Connect to undo log
+        self.undo_log_manager.set_storage_manager(
+            self.mock_storage
+        )  # NEW: Connect to undo log
         self.strategy: ConcurrencyStrategy = LockBasedStrategy()
         self.id_generator = TransactionIdGenerator()
         self.coordinator = TransactionCoordinator(self.tx_manager, self.strategy)
@@ -52,6 +56,7 @@ class ConcurrencyControlManager:
     def begin_transaction(self) -> int:
         tx_id = self.id_generator.generate()
         self.tx_manager.create_transaction(tx_id)
+        self.undo_log_manager.log_start(tx_id)
         return tx_id
 
     def log_object(self, obj: Any, transaction_id: int, action: str):
@@ -66,6 +71,7 @@ class ConcurrencyControlManager:
 
     def commit_transaction(self, transaction_id: int):
         self.coordinator.commit(transaction_id)
+        self.undo_log_manager.log_commit(transaction_id)
 
     def abort_transaction(self, transaction_id: int, reason: str = "User requested"):
         self.coordinator.abort(transaction_id, reason)
