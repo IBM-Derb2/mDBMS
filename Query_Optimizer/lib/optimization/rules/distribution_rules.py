@@ -14,9 +14,10 @@ Implements equivalence rules for distributing operations:
 
 from typing import Optional, Set
 import logging
-from Query_Optimizer.query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
 from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer, TreeManipulator
+from globalsy.constants.query_types import QueryTypes
 
 
 class DistributionRule(OptimizationRule):
@@ -33,7 +34,7 @@ class DistributionRule(OptimizationRule):
         - Selections over joins (push down selections)
         - Projections over joins (push down projections)
         """
-        if tree.type != 'SELECT':
+        if tree.type != QueryTypes.SELECT:
             return False
 
         # Check if we have selection/projection over join
@@ -75,8 +76,8 @@ class DistributionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Look for both WHERE and JOIN nodes
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
         # If we have both WHERE and JOIN, selection can potentially be pushed down
         return len(where_nodes) > 0 and len(join_nodes) > 0
@@ -86,13 +87,13 @@ class DistributionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Look for explicit column selection (not SELECT *) over joins
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
         if not join_nodes:
             return False
 
         # Check if we have specific columns selected (opportunity for projection push-down)
-        column_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'COLUMN')
+        column_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.COLUMN)
 
         # If we have both columns and joins, projection can be pushed down
         return len(column_nodes) > 0
@@ -198,16 +199,16 @@ class DistributionRule(OptimizationRule):
         if not relation_conditions:
             return tree
 
-        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
+        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.TABLE)
         if not table_nodes:
-            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
+            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
 
         for node in table_nodes:
             target_node = node
             lookup_name = node.val
 
             # Handle Alias
-            if node.parent and node.parent.type == 'ALIAS':
+            if node.parent and node.parent.type == QueryTypes.ALIAS:
                 target_node = node.parent
                 lookup_name = target_node.val
 
@@ -233,9 +234,9 @@ class DistributionRule(OptimizationRule):
                 already_exists = False
                 while curr:
                     # Berhenti jika ketemu boundary (JOIN/SELECT) agar tidak scan terlalu jauh
-                    if curr.type in ('JOIN', 'SELECT', 'FROM'):
+                    if curr.type in [QueryTypes.FROM, QueryTypes.SELECT, QueryTypes.JOIN]:
                         break
-                    if curr.type == 'WHERE' and curr.val == combined_expression:
+                    if curr.type == QueryTypes.WHERE and curr.val == combined_expression:
                         already_exists = True
                         break
                     curr = curr.parent
@@ -246,7 +247,7 @@ class DistributionRule(OptimizationRule):
                 self._log('debug', f"Pushing conditions to {lookup_name}")
 
                 new_where_node = QueryTree(
-                    type='WHERE',
+                    type=QueryTypes.WHERE,
                     val=combined_expression,
                     childs=[],
                     parent=None
@@ -272,11 +273,11 @@ class DistributionRule(OptimizationRule):
         join_attributes = set()
 
         # Find JOIN nodes and extract their conditions
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
         for join_node in join_nodes:
             # Look for ON clause
-            on_nodes = TreeAnalyzer.find_nodes_by_type(join_node, 'ON')
+            on_nodes = TreeAnalyzer.find_nodes_by_type(join_node, QueryTypes.ON)
             for on_node in on_nodes:
                 conditions = ConditionAnalyzer.extract_conditions(on_node)
                 for cond in conditions:
@@ -298,15 +299,15 @@ class DistributionRule(OptimizationRule):
         if not all_needed_columns:
             return tree
 
-        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
+        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.TABLE)
         if not table_nodes:
-            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
+            table_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
 
         for node in table_nodes:
             target_node = node
             lookup_name = node.val
 
-            if node.parent and node.parent.type == 'ALIAS':
+            if node.parent and node.parent.type == QueryTypes.ALIAS:
                 target_node = node.parent
                 lookup_name = target_node.val
 
@@ -324,9 +325,9 @@ class DistributionRule(OptimizationRule):
                 curr = target_node.parent
                 already_exists = False
                 while curr:
-                    if curr.type in ('JOIN', 'SELECT', 'FROM'):
+                    if curr.type in [QueryTypes.FROM, QueryTypes.SELECT, QueryTypes.JOIN]:
                         break
-                    if curr.type == 'PROJECT' and curr.val == proj_val:
+                    if curr.type == QueryTypes.PROJECT and curr.val == proj_val:
                         already_exists = True
                         break
                     curr = curr.parent
@@ -337,7 +338,7 @@ class DistributionRule(OptimizationRule):
                 self._log('debug', f"Pushing projection to {lookup_name}")
 
                 new_project_node = QueryTree(
-                    type='PROJECT',
+                    type=QueryTypes.PROJECT,
                     val=proj_val,
                     childs=[],
                     parent=None

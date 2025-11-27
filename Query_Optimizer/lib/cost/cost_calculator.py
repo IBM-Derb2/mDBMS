@@ -76,7 +76,7 @@ def get_operation_cost(node: QueryTree) -> int:
     elif node.type == QueryTypes.ON:
         return 2
     elif node.type == QueryTypes.JOIN:
-        if node.val == 'NATURAL':
+        if node.val == QueryTypes.NATURAL:
             return 1000
         else:
             return 500

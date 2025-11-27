@@ -10,8 +10,9 @@ Implements equivalence rules for join operations:
 
 from typing import Optional, List
 import logging
-from Query_Optimizer.query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
+from globalsy.constants.query_types import QueryTypes
 
 
 class JoinRule(OptimizationRule):
@@ -52,7 +53,7 @@ class JoinRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Count JOIN nodes in the tree
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
         # If we have 2 or more joins, optimization is worthwhile
         return len(join_nodes) >= 2
@@ -102,7 +103,7 @@ class JoinRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Find all JOIN nodes
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
         self._log('debug', f"Extracted {len(join_nodes)} join operations")
         return join_nodes
@@ -112,7 +113,7 @@ class JoinRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Find all TABLE nodes
-        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'TABLE')
+        table_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.TABLE)
 
         self._log('debug', f"Extracted {len(table_nodes)} relations")
         return table_nodes
