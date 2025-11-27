@@ -9,6 +9,7 @@ from .b_plus_tree_index import BPlusTreeIndex
 from .hash_index import HashIndex
 from .utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from .serializer import Serializer
+from .classes import Table
 
 
 class StorageEngine:
@@ -426,3 +427,47 @@ class StorageEngine:
         indexer = HashIndex()
         indexer.load(index_path)
         return indexer.search(search_key)
+
+    def save_buffer_to_disk(self, buffer):
+        for table in buffer.tables:
+            table_name = table.name.lower()
+
+            schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+            data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+            # read schema
+            with open(schema_path, "rb") as f:
+                schema_bin = f.read()
+            schema = self.serializer.deserialize_schema(schema_bin)
+            columns = schema["columns"]
+
+            # serialize
+            binary_data = self.serializer.serialize_with_blocks(
+                table.data, columns
+            )
+
+            # write
+            with open(data_path, "wb") as f:
+                f.write(binary_data)
+
+        buffer.tables.clear()
+
+    def read_disk_to_buffer(self, table_name):
+        table_name = table_name.lower()
+
+        schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+        data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+        # load schema
+        with open(schema_path, "rb") as f:
+            schema_bin = f.read()
+        schema = self.serializer.deserialize_schema(schema_bin)
+        columns = schema["columns"]
+
+        # load data
+        with open(data_path, "rb") as f:
+            data_bin = f.read()
+
+        rows = self.serializer.deserialize_with_blocks(data_bin, columns)
+
+        return Table(table_name, rows)
