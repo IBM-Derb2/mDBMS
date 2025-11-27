@@ -3,7 +3,7 @@ DDL Parser
 Handles parsing of DDL statements: CREATE, DROP, and transaction commands.
 """
 
-from ...query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from globalsy.constants.query_types import QueryTypes
 from .base_parser import BaseParser
 
@@ -13,8 +13,8 @@ class DDLParser(BaseParser):
 
     def parse_create(self) -> QueryTree:
         """Parse CREATE TABLE statement"""
-        self._expect_keyword('CREATE')
-        self._expect_keyword('TABLE')
+        self._expect_keyword(QueryTypes.CREATE)
+        self._expect_keyword(QueryTypes.TABLE)
 
         # Parse table name
         if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
@@ -171,8 +171,8 @@ class DDLParser(BaseParser):
 
     def parse_drop(self) -> QueryTree:
         """Parse DROP TABLE statement"""
-        self._expect_keyword('DROP')
-        self._expect_keyword('TABLE')
+        self._expect_keyword(QueryTypes.DROP)
+        self._expect_keyword(QueryTypes.TABLE)
 
         # Parse table name
         if self.current_token.type not in ('IDENTIFIER', 'KEYWORD'):
@@ -210,5 +210,5 @@ class DDLParser(BaseParser):
 
     def parse_commit(self) -> QueryTree:
         """Parse COMMIT"""
-        self._expect_keyword('COMMIT')
+        self._expect_keyword(QueryTypes.COMMIT)
         return QueryTree(type=QueryTypes.COMMIT, val=QueryTypes.COMMIT)
