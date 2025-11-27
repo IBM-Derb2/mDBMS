@@ -216,6 +216,10 @@ class QueryProcessor:
         elif node.type == QueryTypes.TABLE:  
             return self._from_table(node)
         
+        elif node.type == QueryTypes.PROJECT:
+            child_result = self._process_node(node.childs[0])
+            return self._apply_column_selection(child_result, node)
+        
         elif node.type == QueryTypes.SELECT:
             return self._process_selection_stmt(node)
             
@@ -223,6 +227,8 @@ class QueryProcessor:
             left_result = self._process_node(node.childs[0])
             right_result = self._process_node(node.childs[1])
             return self._nested_loop_join(left_result, right_result, node.val)
+        elif node.type == QueryTypes.CROSS_JOIN:
+            return self._cartesian(node)
             
         elif node.type == QueryTypes.UPDATE:
             return self._update_table(node)
@@ -300,6 +306,19 @@ class QueryProcessor:
             return data
             
         return self._select_columns(data, columns)
+    
+    def _condition_storage(self, rows: Rows, condition_node, table_name: str) -> Rows:
+        if rows.rows_count == 0:
+            return rows
+        conditions = self._extract_conditions(condition_node)
+        dr = DataRetrieval(table=table_name, column=["*"], conditions=conditions)
+        print(f"[QP] Sending conditional read request for table {table_name} with conditions: {conditions}")
+        filtered_data = []
+        for row in rows.data:
+            if self._matches_retrieval_conditions(row, conditions):
+                filtered_data.append(row)
+        return Rows(data=filtered_data, rows_count=len(filtered_data))
+    
 
     def _from_table(self, node):
         table_name = node.val
@@ -532,3 +551,26 @@ class QueryProcessor:
         
         if not data.data: return data
         return Rows(data=data.data[:limit_value], rows_count=len(data.data[:limit_value]))
+    
+    def _cartesian(self, node) -> Rows:
+        if not node.childs: return Rows()
+        
+        # Ambil semua tabel
+        tables_data = []
+        for child in node.childs:
+            tables_data.append(self._process_node(child).data)
+            
+        if not tables_data: return Rows()
+        
+        result = tables_data[0]
+        
+        # Iteratif cross join
+        for i in range(1, len(tables_data)):
+            next_table = tables_data[i]
+            temp_res = []
+            for r1 in result:
+                for r2 in next_table:
+                    temp_res.append({**r1, **r2}) 
+            result = temp_res
+            
+        return Rows(data=result, rows_count=len(result))
