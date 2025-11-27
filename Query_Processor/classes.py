@@ -216,12 +216,11 @@ class QueryProcessor:
         elif node.type == QueryTypes.TABLE:  
             return self._from_table(node)
         
-        elif node.type == QueryTypes.PROJECT:
-            child_result = self._process_node(node.childs[0])
-            return self._apply_column_selection(child_result, node)
-        
         elif node.type == QueryTypes.SELECT:
             return self._process_selection_stmt(node)
+        
+        elif node.type == "PROJECT" or (hasattr(QueryTypes, 'PROJECT') and node.type == QueryTypes.PROJECT):
+            return self._process_projection(node)
             
         elif node.type == QueryTypes.JOIN:
             left_result = self._process_node(node.childs[0])
@@ -274,7 +273,7 @@ class QueryProcessor:
         if not from_node:
             return Rows(data=[], rows_count=0)
 
-        base_rows = self._process_node(from_node)
+        base_rows = self._process_from_clause(from_node)
 
         if where_node and where_node.childs:
             conditions = self._extract_conditions(where_node.childs[0])
@@ -294,6 +293,50 @@ class QueryProcessor:
             base_rows = self._apply_column_selection(base_rows, columns_node)
 
         return base_rows
+    
+    def _process_from_clause(self, from_node) -> Rows:
+        if not from_node.childs:
+            return Rows(data=[], rows_count=0)
+        
+        join_node = None
+        left_table_node = None
+        
+        for child in from_node.childs:
+            if child.type == QueryTypes.JOIN:
+                join_node = child
+            elif child.type == QueryTypes.TABLE or child.type == "PROJECT":
+                if left_table_node is None:
+                    left_table_node = child
+        
+        if join_node:
+            left_data = self._process_node(left_table_node)
+            
+            if len(join_node.childs) >= 2:
+                right_table_node = join_node.childs[0]
+                right_data = self._process_node(right_table_node)
+                
+                operator_node = None
+                for child in join_node.childs:
+                    if child.type == "OPERATOR":
+                        operator_node = child
+                        break
+                
+                if operator_node and len(operator_node.childs) >= 2:
+                    left_col = operator_node.childs[0].val
+                    right_col = operator_node.childs[1].val
+                    return self._nested_loop_join(left_data, right_data, [left_col, right_col])
+            
+            return Rows(data=[], rows_count=0)
+        else:
+            return self._process_node(left_table_node) if left_table_node else Rows(data=[], rows_count=0)
+
+    def _process_projection(self, node) -> Rows:
+        if not node.childs:
+            return Rows(data=[], rows_count=0)
+        
+        base_data = self._process_node(node.childs[0])
+        
+        return base_data
 
     def _apply_column_selection(self, data: Rows, columns_node) -> Rows:
         if not columns_node.childs:
@@ -398,7 +441,33 @@ class QueryProcessor:
     def _extract_conditions(self, node):
         conditions = []
         if hasattr(node, 'type'):
-            if node.type == getattr(QueryTypes, 'CONDITION', 'CONDITION') or node.type == QueryTypes.WHERE:
+            if node.type == "OPERATOR" or (hasattr(QueryTypes, 'OPERATOR') and node.type == QueryTypes.OPERATOR):
+                if node.val and len(node.childs) >= 2:
+                    left_child = node.childs[0]
+                    right_child = node.childs[1]
+                    
+                    if hasattr(left_child, 'type') and left_child.type == 'COLUMN':
+                        col = left_child.val
+                    else:
+                        col = str(left_child.val) if hasattr(left_child, 'val') else str(left_child)
+                    
+                    if '.' in col:
+                        col = col.split('.')[-1]
+                    col = col.lower()
+                    
+                    op = node.val
+                    
+                    if hasattr(right_child, 'type') and right_child.type == 'LITERAL':
+                        val = right_child.val
+                    else:
+                        val = right_child.val if hasattr(right_child, 'val') else right_child
+                    
+                    try:
+                        val = float(val)
+                        if val.is_integer(): val = int(val)
+                    except: pass
+                    conditions.append(Condition(column=col, operation=op, operand=val))
+            elif node.type == getattr(QueryTypes, 'CONDITION', 'CONDITION') or node.type == QueryTypes.WHERE:
                 parts = node.val.split(" ")
                 if len(parts) >= 3:
                     col = parts[0].lower()
@@ -410,7 +479,7 @@ class QueryProcessor:
                     except: pass
                     conditions.append(Condition(column=col, operation=op, operand=val))
             
-            elif node.childs:
+            if node.childs:
                 for child in node.childs:
                     conditions.extend(self._extract_conditions(child))
         return conditions
