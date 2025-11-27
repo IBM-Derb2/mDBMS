@@ -5,13 +5,3 @@ __pycache__/
 **/.DS_Store
 
 *.local.py
-
-# Test logs
-test_abort_logs/
-test_recovery_logs/
-test_recovery_logs_*/
-test_checkpoint_logs/
-wal_logs/
-test_logs/
-test_wal_logs/
-Failure_Recovery/inspect_schema.py

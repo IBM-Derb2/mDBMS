@@ -1,9 +1,0 @@
-{"timestamp": "2025-11-25T05:41:55.835052", "type": "execution", "action": "start", "transaction_id": 101}
-{"timestamp": "2025-11-25T05:41:55.835768", "type": "execution", "action": "insert", "transaction_id": 101, "tablename": "mahasiswa", "pk_value": {"nim": "13520001"}, "record_before": null, "record_after": {"nim": "13520001", "nama": "Budi", "ipk": 3.8}}
-{"timestamp": "2025-11-25T05:41:55.836613", "type": "execution", "action": "commit", "transaction_id": 101}
-{"timestamp": "2025-11-25T05:41:55.837294", "type": "execution", "action": "start", "transaction_id": 102}
-{"timestamp": "2025-11-25T05:41:55.837937", "type": "execution", "action": "update", "transaction_id": 102, "tablename": "mahasiswa", "pk_value": {"nim": "13520001"}, "record_before": {"nim": "13520001", "nama": "Budi", "ipk": 3.8}, "record_after": {"nim": "13520001", "nama": "Budi", "ipk": 3.9}}
-{"timestamp": "2025-11-25T05:41:55.838368", "type": "execution", "action": "commit", "transaction_id": 102}
-{"timestamp": "2025-11-25T05:41:55.838920", "type": "execution", "action": "start", "transaction_id": 103}
-{"timestamp": "2025-11-25T05:41:55.839340", "type": "execution", "action": "delete", "transaction_id": 103, "tablename": "mahasiswa", "pk_value": {"nim": "13520001"}, "record_before": {"nim": "13520001", "nama": "Budi", "ipk": 3.9}, "record_after": null}
-{"timestamp": "2025-11-25T05:41:55.839777", "type": "execution", "action": "commit", "transaction_id": 103}
