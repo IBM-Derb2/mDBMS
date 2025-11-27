@@ -3,28 +3,26 @@ from row_dataclass import BufferedRow, BUFFER_CAPACITY
 from log_config import MockChangeReport
 from log_writer import LogWriter, ActionType
 
-class MockStorageEngine:
-    # Simulasi interaksi I/O disk
-    def fetch_block_from_disk(self, table_name: str, pk_value: Dict[str, Any]) -> Union[dict, None]:
-        pk_str = " | ".join([f"{k}:{v}" for k, v in pk_value.items()])
-        print(f"[SM MOCK] -> Membaca data {table_name}:[{pk_str}] dari disk.")
-        data = {"stock": 100}
-        data.update(pk_value)
-        return data
-    
-    def write_block_to_disk(self, row: BufferedRow):
-        pk_str = " | ".join([f"{k}:{v}" for k, v in row.primary_key_value.items()])
-        print(f"[SM MOCK] <- Menulis data DIRTY [{pk_str}] ke disk (I/O Selesai).")
-        pass
 
 class BufferManager:
     # Mengelola buffer di memori menggunakan kebijakan Least Recently Used (LRU)
-    def __init__(self, log_writer: LogWriter, actual_storage_engine: Any = MockStorageEngine, capacity: int = BUFFER_CAPACITY):
+    def __init__(self, log_writer: LogWriter, capacity: int = BUFFER_CAPACITY):
         self.capacity = capacity
         self.buffer_data: Dict[tuple, BufferedRow] = {}
         self.lru_order: List[tuple] = []
-        self.storage_engine = actual_storage_engine
         self.log_writer = log_writer
+        
+        # Callback functions - to be set by Storage Manager
+        self.fetch_block_callback = None
+        self.write_block_callback = None
+    
+    def set_fetch_block_routine(self, callback):
+        """Register callback for fetching blocks from disk (called by Storage Manager)"""
+        self.fetch_block_callback = callback
+    
+    def set_write_block_routine(self, callback):
+        """Register callback for writing blocks to disk (called by Storage Manager)"""
+        self.write_block_callback = callback
     
     def _get_buffer_key(self, table_name: str, pk_value: Dict[str, Any]) -> tuple:
         # Helper untuk mendapatkan kunci unik buffer
@@ -46,7 +44,7 @@ class BufferManager:
             print(f"[Buffer] Cache hit: {pk_str}. Membaca dari buffer.")
             return self.buffer_data[key]
         print(f"[Buffer] Cache miss: {pk_str}. Mulai baca dari disk...")
-        disk_data = self.storage_engine.fetch_block_from_disk(table_name, pk_value)
+        disk_data = self.fetch_block_callback(table_name, pk_value)
 
         if disk_data is None:
             raise FileNotFoundError(f"Data tidak ditemukan di disk untuk PK: {pk_str}")
@@ -94,8 +92,8 @@ class BufferManager:
             pk_str = " | ".join([f"{k}:{v}" for k, v in row.primary_key_value.items()])
             if not row.is_pinned:
                 if row.is_dirty:
-                    # Tulis ke disk (WAL) sebelum dikeluarkan
-                    self.storage_engine.write_block_to_disk(row)
+                    # Tulis ke disk sebelum dikeluarkan
+                    self.write_block_callback(row)
                 self.lru_order.pop(0) # Hapus dari urutan LRU
                 self.buffer_data.pop(lru_key) # Hapus dari penyimpanan data
                 print(f"[Buffer] Evicted (LRU): {pk_str}")
@@ -120,7 +118,7 @@ class BufferManager:
         dirty_count = 0
         for row in list(self.buffer_data.values()):
             if row.is_dirty:
-                self.storage_engine.write_block_to_disk(row)
+                self.write_block_callback(row)
                 row.is_dirty = False
                 dirty_count += 1
         
@@ -148,7 +146,7 @@ class BufferManager:
             print(f"[Buffer Recovery] Updated {table_name} [{pk_str}] in buffer")
         else:
             try:
-                disk_data = self.storage_engine.fetch_block_from_disk(table_name, pk_value)
+                disk_data = self.fetch_block_callback(table_name, pk_value)
                 if disk_data:
                     row = BufferedRow(table_name, pk_value, new_data, is_dirty=True)
                     self._add_to_buffer(row, key)
@@ -172,7 +170,7 @@ class BufferManager:
             print(f"[Buffer Recovery] Deleted {table_name} [{pk_str}] from buffer")
         else:
             try:
-                disk_data = self.storage_engine.fetch_block_from_disk(table_name, pk_value)
+                disk_data = self.fetch_block_callback(table_name, pk_value)
                 if disk_data:
                     row = BufferedRow(table_name, pk_value, None, is_dirty=True)
                     self._add_to_buffer(row, key)
