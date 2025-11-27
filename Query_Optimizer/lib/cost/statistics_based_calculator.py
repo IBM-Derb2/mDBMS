@@ -7,6 +7,7 @@ This allows the optimizer to show measurable improvements.
 
 from ...query_types import QueryTree
 from globalsy.constants.query_types import QueryTypes
+from globalsy.constants.query_operators import QueryOperators
 from .statistics import get_statistics_manager
 
 
@@ -116,7 +117,7 @@ def _calculate_from_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
                 cost, rows = calculate_node_cost_with_stats(child)
                 table_costs.append(cost)
                 table_rows.append(rows)
-            elif child.type == 'ALIAS' and child.childs and child.childs[0].type == QueryTypes.TABLE:
+            elif child.type == QueryTypes.ALIAS and child.childs and child.childs[0].type == QueryTypes.TABLE:
                 # ALIAS node wrapping a TABLE
                 cost, rows = calculate_node_cost_with_stats(child.childs[0])
                 table_costs.append(cost)
@@ -158,7 +159,7 @@ def _calculate_join_cost(node: QueryTree, stats_mgr) -> tuple[int, int]:
 
     # Estimate join result size based on join type
     # For natural joins or equi-joins, use more accurate formulas
-    if node.val == 'NATURAL' or _has_join_condition(node):
+    if node.val == QueryTypes.NATURAL or _has_join_condition(node):
         # Try to detect if join attribute is a key
         # Heuristic: if one table is much smaller and has close to unique values,
         # it's likely a key (e.g., users.id in orders JOIN users)
@@ -226,7 +227,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
         return 0, 1.0
 
     # For AND conditions, use conjunction formula: multiply selectivities
-    if condition.type == QueryTypes.OPERATOR and condition.val == 'AND':
+    if condition.type == QueryTypes.OPERATOR and condition.val == QueryOperators.AND:
         total_cost = 0
         selectivities = []
         for child in condition.childs:
@@ -240,7 +241,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
         return total_cost, total_selectivity
 
     # For OR conditions, use disjunction formula: 1 - (1-s1)*(1-s2)*...*(1-sn)
-    elif condition.type == QueryTypes.OPERATOR and condition.val == 'OR':
+    elif condition.type == QueryTypes.OPERATOR and condition.val == QueryOperators.OR:
         total_cost = 0
         selectivities = []
         for child in condition.childs:
@@ -269,7 +270,7 @@ def _estimate_where_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]
 
 def _estimate_condition_selectivity(node: QueryTree, stats_mgr) -> tuple[int, float]:
     """Estimate selectivity of a single condition using database theory"""
-    if node.type == QueryTypes.OPERATOR and node.val in ['=', '!=', '<', '<=', '>', '>=']:
+    if node.type == QueryTypes.OPERATOR and node.val in [QueryOperators.EQ, QueryOperators.NEQ, QueryOperators.LT, QueryOperators.LTE, QueryOperators.GT, QueryOperators.GTE]:
         # Simple comparison condition
         cost = 100  # Cost to evaluate condition
 
@@ -306,12 +307,12 @@ def _estimate_condition_selectivity(node: QueryTree, stats_mgr) -> tuple[int, fl
                 return cost, selectivity
 
         # Fall back to heuristics if we can't use statistics
-        if node.val == '=':
+        if node.val == QueryOperators.EQ:
             # Equality is selective (assume ~10 distinct values)
             selectivity = 0.1
-        elif node.val in ['<', '>', '<=', '>=']:
+        elif node.val in [QueryOperators.LT, QueryOperators.GT, QueryOperators.LTE, QueryOperators.GTE]:
             selectivity = 0.33  # Range queries less selective
-        elif node.val == '!=':
+        elif node.val == QueryOperators.NEQ:
             selectivity = 0.9  # Not equal is not selective
         else:
             selectivity = 0.5
