@@ -75,10 +75,6 @@ class TransactionManager:
         tx = Transaction(transaction_id=transaction_id)
         self.transactions[transaction_id] = tx
         self.active_transactions.add(transaction_id)
-
-        print(
-            f"[TxManager] TX {transaction_id} dibuat dengan status: {tx.status.value}"
-        )
         return tx
 
     def get_transaction(self, transaction_id: int) -> Optional[Transaction]:
@@ -96,7 +92,6 @@ class TransactionManager:
             )
 
         tx.status = TransactionStatus.PARTIALLY_COMMITTED
-        print(f"[TxManager] TX {transaction_id} -> PARTIALLY_COMMITTED")
 
     def commit_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
@@ -119,8 +114,6 @@ class TransactionManager:
             self.active_transactions.remove(transaction_id)
         self.committed_transactions.add(transaction_id)
 
-        print(f"[TxManager] [OK] TX {transaction_id} COMMITTED")
-
     def fail_transaction(self, transaction_id: int, reason: str = "Unknown"):
         tx = self.transactions.get(transaction_id)
         if not tx:
@@ -130,13 +123,9 @@ class TransactionManager:
             TransactionStatus.ACTIVE,
             TransactionStatus.PARTIALLY_COMMITTED,
         ]:
-            print(
-                f"[TxManager] Warning: TX {transaction_id} sudah dalam status {tx.status.value}"
-            )
             return
 
         tx.status = TransactionStatus.FAILED
-        print(f"[TxManager] [FAIL] TX {transaction_id} FAILED: {reason}")
 
     def abort_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
@@ -156,8 +145,6 @@ class TransactionManager:
             self.active_transactions.remove(transaction_id)
         self.aborted_transactions.add(transaction_id)
 
-        print(f"[TxManager] [ABORT] TX {transaction_id} ABORTED (rolled back)")
-
     def terminate_transaction(self, transaction_id: int):
         tx = self.transactions.get(transaction_id)
         if not tx:
@@ -170,7 +157,6 @@ class TransactionManager:
             )
 
         tx.status = TransactionStatus.TERMINATED
-        print(f"[TxManager] TX {transaction_id} TERMINATED (keluar dari sistem)")
 
     def detect_deadlock(self) -> Optional[List[int]]:
         wait_for_graph: Dict[int, Set[int]] = {}
@@ -182,7 +168,7 @@ class TransactionManager:
                     wait_for_graph[tx_id] = set()
                 wait_for_graph[tx_id].add(tx.waiting_for)
 
-        def has_cycle(
+        def find_cycle(
             node: int, visited: Set[int], rec_stack: Set[int], path: List[int]
         ) -> Optional[List[int]]:
             visited.add(node)
@@ -192,7 +178,7 @@ class TransactionManager:
             if node in wait_for_graph:
                 for neighbor in wait_for_graph[node]:
                     if neighbor not in visited:
-                        result = has_cycle(neighbor, visited, rec_stack, path.copy())
+                        result = find_cycle(neighbor, visited, rec_stack, path.copy())
                         if result:
                             return result
                     elif neighbor in rec_stack:
@@ -205,9 +191,8 @@ class TransactionManager:
         visited = set()
         for tx_id in wait_for_graph:
             if tx_id not in visited:
-                cycle = has_cycle(tx_id, visited, set(), [])
+                cycle = find_cycle(tx_id, visited, set(), [])
                 if cycle:
-                    print(f"[TxManager] [WARN] DEADLOCK DETECTED: {cycle}")
                     return cycle
 
         return None

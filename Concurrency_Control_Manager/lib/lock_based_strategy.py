@@ -10,7 +10,9 @@ from .strategy_interface import ConcurrencyStrategy, Response
 class LockEntry:
     lock_type: Literal["read", "write"]
     holders: Set[int] = field(default_factory=set)
-    wait_queue: list = field(default_factory=list)  # List of (tx_id, action) waiting for this lock
+    wait_queue: list = field(
+        default_factory=list
+    )  # List of (tx_id, action) waiting for this lock
 
     def __repr__(self):
         return f"Lock(type={self.lock_type}, holders={self.holders}, waiting={len(self.wait_queue)})"
@@ -19,18 +21,12 @@ class LockEntry:
 class LockBasedStrategy(ConcurrencyStrategy):
 
     def __init__(self, deadlock_prevention_scheme: str = "wound-wait"):
-        """
-        Initialize Lock-Based Strategy with deadlock prevention.
-
-        Args:
-            deadlock_prevention_scheme: "wound-wait", "wait-die", or "timeout"
-        """
+        """Initialize Lock-Based Strategy with deadlock prevention."""
         self.lock_table: Dict[str, LockEntry] = {}
-        self.verbose = True
         self.deadlock_prevention_scheme = deadlock_prevention_scheme
         self.lock_timeout = 5.0  # seconds
-        self.tx_manager_ref: Optional[Any] = None  # Will be set by coordinator
-        self.deadlock_callback: Optional[Callable] = None  # Callback for deadlock detection
+        self.tx_manager_ref: Optional[Any] = None
+        self.deadlock_callback: Optional[Callable] = None
 
     def set_transaction_manager(self, tx_manager):
         """Set reference to transaction manager for waiting_for updates."""
@@ -93,103 +89,70 @@ class LockBasedStrategy(ConcurrencyStrategy):
             tx = self.tx_manager_ref.get_transaction(tx_id)
             if tx:
                 tx.waiting_for = waiting_for_tx_id
-                if waiting_for_tx_id is not None and self.verbose:
-                    print(f"[LockStrategy] TX {tx_id} is now WAITING for TX {waiting_for_tx_id}")
 
     def log_object(self, obj: Any, transaction_id: int, action: str):
-        object_id = self._get_object_id(obj)
-        action_upper = self._normalize_action(action)
+        obj_id = self._get_object_id(obj)
+        action = self._normalize_action(action)
 
         response = self.validate_object(obj, transaction_id, action)
 
         if not response.allowed:
             raise Exception(
-                f"Pelanggaran Concurrency: TX {transaction_id} tidak bisa "
-                f"{action_upper} pada objek '{object_id}'"
+                f"Concurrency violation: TX {transaction_id} cannot "
+                f"{action} on object '{obj_id}'"
             )
 
-        if action_upper == "WRITE":
-            if object_id in self.lock_table:
-                current_lock = self.lock_table[object_id]
+        if action == "WRITE":
+            if obj_id in self.lock_table:
+                current_lock = self.lock_table[obj_id]
                 if current_lock.lock_type == "read" and current_lock.holders == {
                     transaction_id
                 }:
-                    if self.verbose:
-                        print(
-                            f"[LockStrategy] Lock UPGRADE: READ -> WRITE pada '{object_id}' untuk TX {transaction_id}"
-                        )
+                    pass  # Lock upgrade from READ to WRITE
 
-            self.lock_table[object_id] = LockEntry(
+            self.lock_table[obj_id] = LockEntry(
                 lock_type="write", holders={transaction_id}
             )
-            if self.verbose:
-                print(
-                    f"[LockStrategy] [OK] WRITE lock acquired: {self.lock_table[object_id]}"
-                )
 
-        elif action_upper == "READ":
-            if object_id not in self.lock_table:
-                self.lock_table[object_id] = LockEntry(
+        elif action == "READ":
+            if obj_id not in self.lock_table:
+                self.lock_table[obj_id] = LockEntry(
                     lock_type="read", holders={transaction_id}
                 )
-                if self.verbose:
-                    print(
-                        f"[LockStrategy] [OK] READ lock (new): {self.lock_table[object_id]}"
-                    )
             else:
-                current_lock = self.lock_table[object_id]
+                current_lock = self.lock_table[obj_id]
 
                 if current_lock.lock_type == "read":
                     current_lock.holders.add(transaction_id)
-                    if self.verbose:
-                        print(
-                            f"[LockStrategy] [OK] READ lock (shared): {self.lock_table[object_id]}"
-                        )
-
                 elif (
                     current_lock.lock_type == "write"
                     and transaction_id in current_lock.holders
                 ):
-                    if self.verbose:
-                        print(
-                            f"[LockStrategy] [INFO] TX {transaction_id} sudah punya WRITE lock, READ implicitly allowed"
-                        )
+                    pass  # Already have write lock, read implicitly allowed
 
         else:
-            raise ValueError(f"Action unknown '{action}'. Gunakan 'read' atau 'write'.")
+            raise ValueError(f"Unknown action '{action}'. Use 'read' or 'write'.")
 
         # Clear waiting_for since lock was acquired
         self._update_waiting_for(transaction_id, None)
 
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
-        object_id = self._get_object_id(obj)
-        action_upper = self._normalize_action(action)
+        obj_id = self._get_object_id(obj)
+        action = self._normalize_action(action)
 
-        if object_id not in self.lock_table:
-            if self.verbose:
-                print(
-                    f"[LockStrategy] Validasi '{action}' pada '{obj}' untuk TX {transaction_id}: DIIZINKAN (belum ada lock)"
-                )
+        if obj_id not in self.lock_table:
             return Response(allowed=True, transaction_id=transaction_id)
 
-        current_lock = self.lock_table[object_id]
+        current_lock = self.lock_table[obj_id]
 
-        if action_upper == "READ":
+        if action == "READ":
             if current_lock.lock_type == "read":
-                if self.verbose:
-                    print(
-                        f"[LockStrategy] Validasi READ pada '{obj}' untuk TX {transaction_id}: DIIZINKAN (shared read lock)"
-                    )
                 return Response(allowed=True, transaction_id=transaction_id)
 
             elif (
                 current_lock.lock_type == "write"
                 and transaction_id in current_lock.holders
             ):
-                if self.verbose:
-                    print(
-                        f"[LockStrategy] Validasi READ pada '{obj}' untuk TX {transaction_id}: DIIZINKAN (pemilik write lock)"
-                    )
                 return Response(allowed=True, transaction_id=transaction_id)
 
             else:
@@ -198,7 +161,6 @@ class LockBasedStrategy(ConcurrencyStrategy):
                 should_wait = self._should_wait(transaction_id, holders)
 
                 if should_wait:
-                    # Update waiting_for to oldest holder
                     oldest_holder = min(holders)
                     self._update_waiting_for(transaction_id, oldest_holder)
 
@@ -206,48 +168,27 @@ class LockBasedStrategy(ConcurrencyStrategy):
                     if self.deadlock_callback:
                         self.deadlock_callback()
 
-                    if self.verbose:
-                        print(
-                            f"[LockStrategy] Validasi READ pada '{obj}' untuk TX {transaction_id}: "
-                            f"WAIT (write lock oleh {holders}, scheme={self.deadlock_prevention_scheme})"
-                        )
-                else:
-                    if self.verbose:
-                        print(
-                            f"[LockStrategy] Validasi READ pada '{obj}' untuk TX {transaction_id}: "
-                            f"DITOLAK - ABORT (scheme={self.deadlock_prevention_scheme})"
-                        )
-
                 return Response(allowed=False, transaction_id=transaction_id)
 
-        elif action_upper == "WRITE":
+        elif action == "WRITE":
             if (
                 current_lock.lock_type == "write"
                 and transaction_id in current_lock.holders
             ):
-                if self.verbose:
-                    print(
-                        f"[LockStrategy] Validasi WRITE pada '{obj}' untuk TX {transaction_id}: DIIZINKAN (sudah pemilik write lock)"
-                    )
                 return Response(allowed=True, transaction_id=transaction_id)
 
             elif current_lock.lock_type == "read" and current_lock.holders == {
                 transaction_id
             }:
-                if self.verbose:
-                    print(
-                        f"[LockStrategy] Validasi WRITE pada '{obj}' untuk TX {transaction_id}: DIIZINKAN (lock upgrade dari read ke write)"
-                    )
                 return Response(allowed=True, transaction_id=transaction_id)
 
             else:
                 # Conflict: lock held by other transaction(s)
-                holders = current_lock.holders - {transaction_id}  # Exclude self if in read lock
+                holders = current_lock.holders - {transaction_id}
                 if holders:
                     should_wait = self._should_wait(transaction_id, holders)
 
                     if should_wait:
-                        # Update waiting_for to oldest holder
                         oldest_holder = min(holders)
                         self._update_waiting_for(transaction_id, oldest_holder)
 
@@ -255,35 +196,21 @@ class LockBasedStrategy(ConcurrencyStrategy):
                         if self.deadlock_callback:
                             self.deadlock_callback()
 
-                        if self.verbose:
-                            lock_type_str = "read" if current_lock.lock_type == "read" else "write"
-                            print(
-                                f"[LockStrategy] Validasi WRITE pada '{obj}' untuk TX {transaction_id}: "
-                                f"WAIT ({lock_type_str} lock oleh {holders}, scheme={self.deadlock_prevention_scheme})"
-                            )
-                    else:
-                        if self.verbose:
-                            print(
-                                f"[LockStrategy] Validasi WRITE pada '{obj}' untuk TX {transaction_id}: "
-                                f"DITOLAK - ABORT (scheme={self.deadlock_prevention_scheme})"
-                            )
-
                     return Response(allowed=False, transaction_id=transaction_id)
                 else:
-                    # No other holders, can proceed
                     return Response(allowed=True, transaction_id=transaction_id)
 
         else:
-            raise ValueError(f"Action unknown '{action}'. Gunakan 'read' atau 'write'.")
+            raise ValueError(f"Unknown action '{action}'. Use 'read' or 'write'.")
 
     def end_transaction(self, transaction_id: int):
-        released_objects = [
+        released = [
             obj_id
             for obj_id, lock in self.lock_table.items()
             if transaction_id in lock.holders
         ]
 
-        for obj_id in released_objects:
+        for obj_id in released:
             lock = self.lock_table[obj_id]
             lock.holders.discard(transaction_id)
 
@@ -292,12 +219,6 @@ class LockBasedStrategy(ConcurrencyStrategy):
 
         # Clear waiting_for
         self._update_waiting_for(transaction_id, None)
-
-        if self.verbose:
-            print(
-                f"[LockStrategy] TX {transaction_id} released locks on: {released_objects}"
-            )
-            print(f"[LockStrategy] Remaining locks: {dict(self.lock_table)}")
 
     def get_wait_for_graph(self) -> Dict[int, Set[int]]:
         """
@@ -318,12 +239,12 @@ class LockBasedStrategy(ConcurrencyStrategy):
 
     def print_lock_table(self):
         """Print current lock table for debugging."""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("LOCK TABLE")
-        print("="*60)
+        print("=" * 60)
         if not self.lock_table:
             print("(empty)")
         else:
             for obj_id, lock in self.lock_table.items():
                 print(f"Object '{obj_id}': {lock}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
