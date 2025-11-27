@@ -616,6 +616,8 @@ class QueryProcessor:
                 if str(l_val) == str(r_val):
                     new_row = l.copy()
                     for r_k, r_v in r.items():
+                        if r_k.lower() == r_key_raw.lower():
+                            continue
                         if r_k in new_row:
                             new_row[f"{r_k}_right"] = r_v
                         else:
@@ -677,7 +679,13 @@ class QueryProcessor:
             temp_res = []
             for r1 in result:
                 for r2 in next_table:
-                    temp_res.append({**r1, **r2}) 
+                    new_row = r1.copy()
+                    for r2_k, r2_v in r2.items():
+                        if r2_k in new_row:
+                            new_row[f"{r2_k}_right"] = r2_v
+                        else:
+                            new_row[r2_k] = r2_v
+                    temp_res.append(new_row)
             result = temp_res
             
         return Rows(data=result, rows_count=len(result))
