@@ -8,9 +8,9 @@ Implements equivalence rules for projection operations:
 
 from typing import Optional
 import logging
-from Query_Optimizer.query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
-
+from globalsy.constants.query_types import QueryTypes
 
 class ProjectionRule(OptimizationRule):
     """Handles all projection-related optimizations"""
@@ -25,7 +25,7 @@ class ProjectionRule(OptimizationRule):
         Looks for:
         - Cascaded projections (multiple π operations)
         """
-        if tree.type != 'SELECT':
+        if tree.type != QueryTypes.SELECT:
             return False
 
         # Check for cascaded projections
@@ -49,14 +49,14 @@ class ProjectionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Count SELECT nodes (projections) in the tree
-        select_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'SELECT')
+        select_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.SELECT)
 
         # If we have nested SELECTs (more than one), we have cascaded projections
         if len(select_nodes) > 1:
             return True
 
         # Check for PROJECTION nodes specifically
-        projection_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'PROJECT')
+        projection_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.PROJECT)
         if len(projection_nodes) > 1:
             return True
 
@@ -73,8 +73,8 @@ class ProjectionRule(OptimizationRule):
         self._log('debug', "Eliminating cascaded projections")
 
         # Find all projection-related nodes
-        select_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'SELECT')
-        projection_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'PROJECT')
+        select_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.SELECT)
+        projection_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.PROJECT)
 
         all_projection_nodes = select_nodes + projection_nodes
 

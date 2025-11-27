@@ -46,6 +46,7 @@ class QueryTypes:
     INTO = "INTO"
     ON = "ON"
     JOIN = "JOIN"
+    CROSS_JOIN = "CROSS_JOIN"
     DROP_MODE = "DROP_MODE"
 
     # Node types (tree/AST)
@@ -61,3 +62,5 @@ class QueryTypes:
     # Parser/test types
     ALIAS = "ALIAS"
     ASSIGNMENT = "ASSIGNMENT"
+
+    PROJECT = "PROJECT"

@@ -24,8 +24,11 @@ Key Benefits:
 
 from typing import Optional
 import logging
-from Query_Optimizer.query_types import QueryTree
+from globalsy.classes.query_tree import QueryTree
 from Query_Optimizer.lib.optimization.base_rule import OptimizationRule
+from globalsy.constants.query_types import QueryTypes
+from globalsy.constants.query_operators import QueryOperators
+
 
 
 class SelectionRule(OptimizationRule):
@@ -44,7 +47,7 @@ class SelectionRule(OptimizationRule):
         - Selections over Cartesian products
         - Selections over joins
         """
-        if tree.type != 'SELECT':
+        if tree.type != QueryTypes.SELECT:
             self._log('debug', "Not a SELECT query, skipping")
             return False
 
@@ -92,20 +95,20 @@ class SelectionRule(OptimizationRule):
         # This is the most beneficial optimization - converts Cartesian product to join
         if self._has_selection_over_join_or_product(tree):
             self._log(
-                'info', "➡️ Heuristic: Converting Cartesian product + WHERE to theta join")
+                'info', "Heuristic: Converting Cartesian product + WHERE to theta join")
             tree = self._combine_selection_with_join(tree)
 
         # Rule 2: Decompose conjunctive selections
         # Enables independent optimization of each condition
         if self._has_conjunctive_condition(tree):
             self._log(
-                'info', "➡️ Heuristic: Decomposing AND conditions for early selection")
+                'info', "Heuristic: Decomposing AND conditions for early selection")
             tree = self._decompose_conjunctive_selection(tree)
 
         # Rule 3: Apply commutativity if beneficial (most restrictive first)
         if self._has_cascaded_selections(tree):
             self._log(
-                'info', "➡️ Heuristic: Reordering selections by selectivity (most restrictive first)")
+                'info', "Heuristic: Reordering selections by selectivity (most restrictive first)")
             tree = self._optimize_selection_order(tree)
 
         return tree
@@ -115,15 +118,15 @@ class SelectionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Look for WHERE nodes with AND operators
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
         for where_node in where_nodes:
             # Check if node value contains AND
-            if where_node.val and 'AND' in where_node.val.upper():
+            if where_node.val and QueryOperators.AND in where_node.val.upper():
                 return True
 
             # Check for AND nodes in children
-            and_nodes = TreeAnalyzer.find_nodes_by_type(where_node, 'AND')
+            and_nodes = TreeAnalyzer.find_nodes_by_type(where_node, QueryOperators.AND)
             if and_nodes:
                 return True
 
@@ -140,7 +143,7 @@ class SelectionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Count WHERE nodes in the tree
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
         # If more than one WHERE, we have cascaded selections
         if len(where_nodes) > 1:
@@ -149,7 +152,7 @@ class SelectionRule(OptimizationRule):
         # Check if any WHERE node has another WHERE as descendant
         for where_node in where_nodes:
             for child in where_node.childs:
-                if TreeAnalyzer.find_nodes_by_type(child, 'WHERE'):
+                if TreeAnalyzer.find_nodes_by_type(child, QueryTypes.WHERE):
                     return True
 
         return False
@@ -159,25 +162,25 @@ class SelectionRule(OptimizationRule):
         from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
 
         # Look for WHERE nodes
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
         if not where_nodes:
             return False
 
         # Look for FROM nodes
-        from_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
+        from_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
         if not from_nodes:
             return False
 
         from_node = from_nodes[0]
 
         # Check if there are JOIN nodes in the subtree
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'JOIN')
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
         if join_nodes:
             self._log('debug', "Found existing JOIN nodes")
             return True
 
         # Check for CROSS JOIN or Cartesian product indicators
-        cross_join_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'CROSS_JOIN')
+        cross_join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.CROSS_JOIN)
         if cross_join_nodes:
             self._log('debug', "Found CROSS JOIN nodes")
             return True
@@ -201,7 +204,7 @@ class SelectionRule(OptimizationRule):
         self._log('debug', "Decomposing conjunctive selection")
 
         # Find WHERE nodes with multiple conditions
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
         for where_node in where_nodes:
             # Extract conditions
@@ -217,7 +220,7 @@ class SelectionRule(OptimizationRule):
                     # Create a WHERE node for each condition
                     for condition in reversed(conditions):
                         new_where = QueryTree(
-                            type='WHERE',
+                            type=QueryTypes.WHERE,
                             val=condition.get('expression', str(condition)),
                             childs=[current] if current else [],
                             parent=None
@@ -253,7 +256,7 @@ class SelectionRule(OptimizationRule):
         self._log('debug', "Optimizing selection order")
 
         # Find all WHERE nodes
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
         if len(where_nodes) <= 1:
             return tree
@@ -290,8 +293,8 @@ class SelectionRule(OptimizationRule):
         self._log('debug', "Combining selection with join")
 
         # Find FROM and WHERE nodes
-        from_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'FROM')
-        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, 'WHERE')
+        from_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
+        where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
         if not from_nodes or not where_nodes:
             return tree
@@ -310,7 +313,7 @@ class SelectionRule(OptimizationRule):
 
                 # Create JOIN node with the join condition
                 join_node = QueryTree(
-                    type='JOIN',
+                    type=QueryTypes.JOIN,
                     val=join_condition['expression'],
                     childs=from_node.childs[:],  # Copy the table references
                     parent=from_node
@@ -339,18 +342,18 @@ class SelectionRule(OptimizationRule):
         # Get table aliases
         table_aliases = []
         for child in from_node.childs:
-            if child.type == 'ALIAS':
+            if child.type == QueryTypes.ALIAS:
                 table_aliases.append(child.val)
 
         # Search for OPERATOR nodes with '=' that reference different table aliases
         def find_equality_between_tables(node: QueryTree) -> Optional[dict]:
-            if node.type == 'OPERATOR' and node.val == '=':
+            if node.type == QueryTypes.OPERATOR and node.val == QueryOperators.EQ:
                 # Check if children are columns from different tables
                 if len(node.childs) >= 2:
                     left = node.childs[0]
                     right = node.childs[1]
 
-                    if left.type == 'COLUMN' and right.type == 'COLUMN':
+                    if left.type == QueryTypes.COLUMN and right.type == QueryTypes.COLUMN:
                         # Extract table aliases from column names (e.g., "u.id" → "u")
                         left_parts = left.val.split('.')
                         right_parts = right.val.split('.')
