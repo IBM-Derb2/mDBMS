@@ -31,12 +31,41 @@ class SQLTokenizer:
 
         QueryTypes.CREATE, QueryTypes.TABLE, QueryTypes.DROP,
 
-        QueryTypes.JOIN, 'INNER', 'NATURAL',
-        QueryTypes.ON, QueryTypes.AS, 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
+        QueryTypes.JOIN,
+        # 'INNER' and 'NATURAL' are JOIN modifiers and do not map to separate QueryTypes constants.
+        # The parser stores the join type inside the join node (QueryTypes.JOIN) via the "val" property
+        # so we include these strings so the tokenizer recognizes them as keywords (KEYWORD tokens),
+        # and the parser can call _match_keyword('INNER') or _match_keyword('NATURAL') as needed.
+        'INNER', 'NATURAL',
+        QueryTypes.ON, QueryTypes.AS,
+
+        # Logical operators and expression keywords (AND/OR/NOT/IN/LIKE/BETWEEN) are represented
+        # as OPERATOR nodes semantically, but we list them here as strings so:
+        # - Tokenizer recognizes them as KEYWORD tokens (so _match_keyword works in parsers), and
+        # - ExpressionParser uses _match_keyword to detect these keywords when parsing expressions
+        #   (e.g., _match_keyword('IN') or _match_keyword('LIKE')).
+        # This allows mixing both operator/token matching styles consistently in the parser code.
+        'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
+
         QueryTypes.ORDER, QueryTypes.BY, QueryTypes.ASC, QueryTypes.DESC, QueryTypes.LIMIT, QueryTypes.OFFSET,
         QueryTypes.GROUP, QueryTypes.HAVING, QueryTypes.DISTINCT, QueryTypes.ALL, QueryTypes.UNION, QueryTypes.INTERSECT, QueryTypes.EXCEPT,
+
+        # Transaction control keywords: the tokenizer uses these strings so the DDL parser
+        # (_expect_keyword('BEGIN') / _expect_keyword('COMMIT')) can detect them.
+        # The parser will then emit a node type like QueryTypes.BEGIN_TRANSACTION or QueryTypes.COMMIT.
         'BEGIN', 'COMMIT', 'ROLLBACK', 'TRANSACTION',
+
+        # DDL constraint keywords: 'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'CONSTRAINT'
+        # are used by the DDL parser to handle constraints, foreign keys, etc. They are not
+        # represented as dedicated QueryTypes constants (e.g., PRIMARY/KEY), so we add them as
+        # strings to ensure the tokenizer returns KEYWORD tokens and the parser can match them.
         'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'CONSTRAINT',
+
+        # Data types and constraint modifiers (INT/FLOAT/CHAR and NULL/DEFAULT/UNIQUE/CHECK/CASCADE/RESTRICT)
+        # are not per se QueryType constants — the DDL parser interprets them and converts them into
+        # QueryTypes.DATA_TYPE or appropriate constraint nodes while building column definitions. They
+        # are included as strings so they become KEYWORD tokens and the parsing code can easily detect
+        # types and modifiers using _match_keyword('INT'), _match_keyword('NULL'), etc.
         'INT', 'FLOAT', 'CHAR',
         'NULL', 'DEFAULT', 'UNIQUE', 'CHECK', 'CASCADE', 'RESTRICT'
     }
