@@ -53,10 +53,12 @@ class DDLParser(BaseParser):
         self._expect_punctuation(')')
 
         # Buat node khusus untuk Foreign Key
-        fk_node = QueryTree(type='FOREIGN_KEY_CONSTRAINT', val=local_col)
+        fk_node = QueryTree(
+            type=QueryTypes.FOREIGN_KEY_CONSTRAINT, val=local_col)
         fk_node.childs.append(
-            QueryTree(type='REFERENCES_TABLE', val=ref_table))
-        fk_node.childs.append(QueryTree(type='REFERENCES_COLUMN', val=ref_col))
+            QueryTree(type=QueryTypes.REFERENCES_TABLE, val=ref_table))
+        fk_node.childs.append(
+            QueryTree(type=QueryTypes.REFERENCES_COLUMN, val=ref_col))
 
         return fk_node
 
@@ -74,7 +76,7 @@ class DDLParser(BaseParser):
         while True:
             col_name = self.current_token.value
             self._advance()
-            pk_cols.append(QueryTree(type='IDENTIFIER', val=col_name))
+            pk_cols.append(QueryTree(type=QueryTypes.IDENTIFIER, val=col_name))
 
             if self._match_punctuation(','):
                 self._advance()
@@ -86,7 +88,7 @@ class DDLParser(BaseParser):
 
         self._expect_punctuation(')')
 
-        return QueryTree(type='PRIMARY_KEY_CONSTRAINT', val='TABLE_PK', childs=pk_cols)
+        return QueryTree(type=QueryTypes.PRIMARY_KEY_CONSTRAINT, val='TABLE_PK', childs=pk_cols)
 
     def _parse_column_definitions(self) -> QueryTree:
         """Parse column definitions in CREATE TABLE"""
