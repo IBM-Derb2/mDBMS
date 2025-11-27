@@ -311,9 +311,12 @@ class QueryProcessor:
         if join_node:
             left_data = self._process_node(left_table_node)
             
-            if len(join_node.childs) >= 2:
+            if len(join_node.childs) >= 1:
                 right_table_node = join_node.childs[0]
                 right_data = self._process_node(right_table_node)
+                
+                if join_node.val == 'NATURAL':
+                    return self._natural_join(left_data, right_data)
                 
                 operator_node = None
                 for child in join_node.childs:
@@ -557,6 +560,41 @@ class QueryProcessor:
             return Rows(data=sorted_data, rows_count=len(sorted_data))
         except Exception:
             return data
+
+    def _natural_join(self, left: Rows, right: Rows) -> Rows:
+        joined = []
+        if not left.data or not right.data:
+            return Rows()
+        
+        left_cols = {k.lower(): k for k in left.data[0].keys()}
+        right_cols = {k.lower(): k for k in right.data[0].keys()}
+        common_cols_lower = set(left_cols.keys()) & set(right_cols.keys())
+        
+        if not common_cols_lower:
+            return Rows(data=[], rows_count=0)
+        
+        for l_row in left.data:
+            for r_row in right.data:
+                match = True
+                for common_col_lower in common_cols_lower:
+                    l_key = left_cols[common_col_lower]
+                    r_key = right_cols[common_col_lower]
+                    
+                    if str(l_row.get(l_key, '')) != str(r_row.get(r_key, '')):
+                        match = False
+                        break
+                
+                if match:
+                    new_row = l_row.copy()
+                    for r_k, r_v in r_row.items():
+                        if r_k.lower() not in common_cols_lower:
+                            if r_k in new_row:
+                                new_row[f"{r_k}_right"] = r_v
+                            else:
+                                new_row[r_k] = r_v
+                    joined.append(new_row)
+        
+        return Rows(data=joined, rows_count=len(joined))
 
     def _nested_loop_join(self, left: Rows, right: Rows, cond) -> Rows:
         joined = []
