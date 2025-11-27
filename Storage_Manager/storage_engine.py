@@ -9,6 +9,7 @@ from .b_plus_tree_index import BPlusTreeIndex
 from .hash_index import HashIndex
 from .utils import DataRetrieval, DataWrite, DataDeletion, Rows, Statistic, IndexType
 from .serializer import Serializer
+from .classes import Table
 
 
 class StorageEngine:
@@ -170,8 +171,6 @@ class StorageEngine:
             binary_data, skema["columns"]
         )
 
-        if len(rows_data) == 0:
-            return Rows()
         
         updated_rows = Rows()
 
@@ -189,31 +188,57 @@ class StorageEngine:
         }
         expected_type = type_mapping.get(col_type)
 
-        for i in range(len(rows_data)):
-            row = rows_data[i]
-
-            if self._matches_conditions(row, data_write.conditions):
-                if isinstance(data_write.new_value, list):
-                    operasi = ""
-                    for item in data_write.new_value:
-                        if isinstance(item, (int, float)):
-                            operasi += str(item)
-                        else:
-                            operasi += str(row.get(item, item))
-
-                    try:
-                        calc_value = eval(operasi)
-                    except Exception:
-                        continue
-
-                    if isinstance(calc_value, expected_type):
-                        row[data_write.column[0]] = calc_value
-                else:
-                    if isinstance(data_write.new_value, expected_type):
-                        row[data_write.column[0]] = data_write.new_value
+        # buat handle insert
+        if not data_write.conditions or len(data_write.conditions) == 0:
+            new_row = {}
+            for col in skema["columns"]:
+                col_name = col["name"]
+                col_type = col["type"]
                 
-                updated_rows.data.append(row)
-                updated_rows.idx.append(i)
+                if col_type == "int":
+                    new_row[col_name] = 0
+                elif col_type == "float":
+                    new_row[col_name] = 0.0
+                elif col_type in ["varchar", "char"]:
+                    new_row[col_name] = ""
+                else:
+                    new_row[col_name] = None
+            
+            if isinstance(data_write.new_value, expected_type) or expected_type is None:
+                new_row[data_write.column[0]] = data_write.new_value
+            
+            rows_data.append(new_row)
+            updated_rows.data.append(new_row)
+            updated_rows.idx.append(len(rows_data) - 1)
+            
+            print(f"[StorageEngine] Inserted new row: {data_write.column[0]} = {data_write.new_value}")
+        
+        else:
+            for i in range(len(rows_data)):
+                row = rows_data[i]
+
+                if self._matches_conditions(row, data_write.conditions):
+                    if isinstance(data_write.new_value, list):
+                        operasi = ""
+                        for item in data_write.new_value:
+                            if isinstance(item, (int, float)):
+                                operasi += str(item)
+                            else:
+                                operasi += str(row.get(item, item))
+
+                        try:
+                            calc_value = eval(operasi)
+                        except Exception:
+                            continue
+
+                        if expected_type is None or isinstance(calc_value, expected_type):
+                            row[data_write.column[0]] = calc_value
+                    else:
+                        if expected_type is None or isinstance(data_write.new_value, expected_type):
+                            row[data_write.column[0]] = data_write.new_value
+                    
+                    updated_rows.data.append(row)
+                    updated_rows.idx.append(i)
         
         updated_rows.rows_count = len(updated_rows.data)
 
@@ -308,22 +333,25 @@ class StorageEngine:
         with open(data_file, "rb") as f:
             rows_data = self.serializer.deserialize_with_blocks(f.read(), schema["columns"])
 
-        if index_type == "hash" or index_type == "Hash":
-            indexer = HashIndex()
-            index_filename = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{column}_hash.dat"
-            
-            # Populate Index: Mapping Nilai -> List Index Baris
-            for i, row in enumerate(rows_data):
-                val = row.get(column)
-                if val is not None:
-                    indexer.insert(val, i)
-            
-            indexer.save(index_filename)
+        indexer = None
+        index_filename = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_{column}_"
 
-        elif index_type == "b+ tree":
-            pass
+        if index_type.lower() == "hash":
+            indexer = HashIndex()
+            index_filename += "hash.dat"
+        elif index_type.lower() == "b+ tree":
+            indexer = BPlusTreeIndex()
+            index_filename += "btree.dat"
+        else:
+            return None
+            
+        # Populate Index: Mapping Nilai -> List Index Baris
+        for i, row in enumerate(rows_data):
+            val = row.get(column)
+            if val is not None:
+                indexer.insert(val, i)
         
-        return None
+        indexer.save(index_filename)
 
     def get_stats(self, table: str) -> Statistic:
         """
@@ -426,3 +454,47 @@ class StorageEngine:
         indexer = HashIndex()
         indexer.load(index_path)
         return indexer.search(search_key)
+
+    def save_buffer_to_disk(self, buffer):
+        for table in buffer.tables:
+            table_name = table.name.lower()
+
+            schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+            data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+            # read schema
+            with open(schema_path, "rb") as f:
+                schema_bin = f.read()
+            schema = self.serializer.deserialize_schema(schema_bin)
+            columns = schema["columns"]
+
+            # serialize
+            binary_data = self.serializer.serialize_with_blocks(
+                table.data, columns
+            )
+
+            # write
+            with open(data_path, "wb") as f:
+                f.write(binary_data)
+
+        buffer.tables.clear()
+
+    def read_disk_to_buffer(self, table_name):
+        table_name = table_name.lower()
+
+        schema_path = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_schema.dat"
+        data_path   = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}.dat"
+
+        # load schema
+        with open(schema_path, "rb") as f:
+            schema_bin = f.read()
+        schema = self.serializer.deserialize_schema(schema_bin)
+        columns = schema["columns"]
+
+        # load data
+        with open(data_path, "rb") as f:
+            data_bin = f.read()
+
+        rows = self.serializer.deserialize_with_blocks(data_bin, columns)
+
+        return Table(table_name, rows)
