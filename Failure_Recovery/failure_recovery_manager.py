@@ -188,6 +188,7 @@ class FailureRecoveryManager:
         Save checkpoint to WAL:
         1. Flush all dirty blocks to disk
         2. Write checkpoint entry with ongoing transactions
+        3. Clear WAL entries before oldest ongoing transaction
         
         Args:
             ongoing_transactions: List of active transaction IDs
@@ -209,9 +210,34 @@ class FailureRecoveryManager:
         
         checkpoint_str = json.dumps(checkpoint_entry)
         self.wal_writer.write_to_file(checkpoint_str)
-        
         print(f"[FRM] Checkpoint entry written to WAL")
+        
+        # Step 3: Clear WAL entries before oldest ongoing transaction
+        print(f"[FRM] Clearing WAL before oldest ongoing transaction...")
+        self.clear_wal_after_checkpoint(ongoing_transactions)
+        
         print(f"[FRM] ===== CHECKPOINT COMPLETE =====\n")
+    
+    def clear_wal_after_checkpoint(self, ongoing_transactions: list):
+        """
+        Clear WAL after checkpoint since data is now safely on disk.
+        Keep only WAL entries from the oldest ongoing transaction onwards.
+        
+        Args:
+            ongoing_transactions: List of active transaction IDs
+        """
+        print("[FRM] Starting WAL cleanup after checkpoint...")
+        
+        if not ongoing_transactions:
+            # No ongoing transactions - can clear entire WAL
+            print("[FRM] No ongoing transactions, clearing entire WAL")
+            self.wal_writer.clear_entire_wal()
+        else:
+            # Clear entries before oldest ongoing transaction
+            print(f"[FRM] Clearing WAL before oldest ongoing transaction")
+            self.wal_writer.clear_wal_before_oldest_transaction(ongoing_transactions)
+            
+        print("[FRM] WAL cleanup completed")
 
     # ========== RECOVERY ==========
     
