@@ -3,7 +3,6 @@ from row_dataclass import BufferedRow, BUFFER_CAPACITY
 from log_config import MockChangeReport
 from log_writer import LogWriter, ActionType
 
-
 class BufferManager:
     # Mengelola buffer di memori menggunakan kebijakan Least Recently Used (LRU)
     def __init__(self, log_writer: LogWriter, capacity: int = BUFFER_CAPACITY):
@@ -12,18 +11,24 @@ class BufferManager:
         self.lru_order: List[tuple] = []
         self.log_writer = log_writer
         
-        # Callback functions - to be set by Storage Manager
+        # Callback functions
         self.fetch_block_callback = None
         self.write_block_callback = None
-    
+        self.read_table_callback = None
+        self.write_table_callback = None
+
     def set_fetch_block_routine(self, callback):
-        """Register callback for fetching blocks from disk (called by Storage Manager)"""
         self.fetch_block_callback = callback
     
     def set_write_block_routine(self, callback):
-        """Register callback for writing blocks to disk (called by Storage Manager)"""
         self.write_block_callback = callback
     
+    def set_read_table_routine(self, callback):
+        self.read_table_callback = callback
+
+    def set_write_table_routine(self, callback):
+        self.write_table_callback = callback
+
     def _get_buffer_key(self, table_name: str, pk_value: Dict[str, Any]) -> tuple:
         # Helper untuk mendapatkan kunci unik buffer
         return (table_name, tuple(sorted(pk_value.items())))
@@ -34,16 +39,16 @@ class BufferManager:
             self.lru_order.remove(key)
         self.lru_order.append(key) # Key baru diakses ditambah di akhir
 
-    ''' Logika Interaksi Buffer '''
+    # Logika Interaksi Buffer
     def read_block(self, table_name: str, pk_value: Dict[str, Any]) -> BufferedRow:
         key = self._get_buffer_key(table_name, pk_value)
         pk_str = " | ".join([f"{k}:{v}" for k, v in pk_value.items()])
 
         if key in self.buffer_data:
             self._update_lru(key)
-            print(f"[Buffer] Cache hit: {pk_str}. Membaca dari buffer.")
+            print(f"[Buffer Manager] Cache hit: {pk_str}. Membaca dari buffer.")
             return self.buffer_data[key]
-        print(f"[Buffer] Cache miss: {pk_str}. Mulai baca dari disk...")
+        print(f"[Buffer Manager] Cache miss: {pk_str}. Mulai baca dari disk...")
         disk_data = self.fetch_block_callback(table_name, pk_value)
 
         if disk_data is None:
@@ -55,7 +60,7 @@ class BufferManager:
     def write_block(self, transaction_id: int, table_name: str, pk_value: Dict[str, Any], new_data: dict) -> MockChangeReport:
         key = self._get_buffer_key(table_name, pk_value)
         if key not in self.buffer_data:
-            print("[Buffer] Data untuk write tidak ada di buffer, membaca dulu...")
+            print("[Buffer Manager] Data untuk write tidak ada di buffer, membaca dulu...")
             self.read_block(table_name, pk_value)
         row = self.buffer_data[key]
         self._update_lru(key) # Update LRU karena data diakses
@@ -71,10 +76,31 @@ class BufferManager:
         row.data = new_data
         row.is_dirty = True
         pk_str = " | ".join([f"{k}:{v}" for k, v in pk_value.items()])
-        print(f"[Buffer] Data [{pk_str}] diubah, ditandai kotor, DAN SUDAH DI-LOG.")
+        print(f"[Buffer Manager] Data [{pk_str}] diubah, ditandai kotor, DAN SUDAH DI-LOG.")
         return report
     
-    ''' Manajemen Ukuran Buffer '''
+    # Tingkat tabel
+    def load_all_rows_of_table(self, table_name: str, pk_column_name: str) -> None:
+        if not self.read_table_callback:
+            print("[Buffer Manager] ERROR: Read table tidak terregister untuk loading")
+            return
+        print(f"[Buffer Manager] Loading semua tabel '{table_name}' dari disk ke buffer")
+        table_obj = self.read_table_callback(table_name)
+        if table_obj and table_obj.data:
+            for row_data in table_obj.data:
+                if pk_column_name not in row_data:
+                    print(f"[Buffer Manager] ERROR: Kolom PK '{pk_column_name}' tidak ditemukan di row data.")
+                    continue
+                # PK -> {Nama_kolom_PK: Nilai_PK}
+                pk_value = {pk_column_name: row_data[pk_column_name]}
+                key = self._get_buffer_key(table_name, pk_value)
+                new_row = BufferedRow(table_name, pk_value, row_data, is_dirty=False)
+                self._add_to_buffer(new_row, key)
+            print(f"[Buffer Manager] Tabel '{table_name}' sukses di-load. Total blok di buffer: {len(self.buffer_data)}")
+        else:
+            print(f"[Buffer Manager] Peringatan: Tabel '{table_name}' adalah kosong atau tidak ditemukan di disk.")
+
+    # Manajemen Ukuran Buffer
     def _add_to_buffer(self, row: BufferedRow, key:tuple):
         # Menambah baris ke buffer dan mengeluarkan yang lama jika penuh
         if len(self.buffer_data) >= self.capacity:
@@ -82,7 +108,7 @@ class BufferManager:
         self.buffer_data[key] = row
         self._update_lru(key) # Memasukkan key baru ke urutan LRU
         pk_str = " | ".join([f"{k}:{v}" for k, v in row.primary_key_value.items()])
-        print(f"[Buffer] Data [{pk_str}] berhasil ditambahkan.")
+        print(f"[Buffer Manager] Data [{pk_str}] berhasil ditambahkan.")
 
     def _evict_block(self):
         # Logika untuk mengeluarkan blok dari buffer.
@@ -96,13 +122,13 @@ class BufferManager:
                     self.write_block_callback(row)
                 self.lru_order.pop(0) # Hapus dari urutan LRU
                 self.buffer_data.pop(lru_key) # Hapus dari penyimpanan data
-                print(f"[Buffer] Evicted (LRU): {pk_str}")
+                print(f"[Buffer Manager] Evicted (LRU): {pk_str}")
                 return
             else: # Pindah ke blok LRU berikutnya
                 self.lru_order.pop(0)
                 self.lru_order.append(lru_key)
-                print(F"[Buffer] Warning: Blok {pk_str} di-pin, mencoba blok LRU berikutnya.")
-        print(f"[Buffer] Warning: buffer penuh dan semua blok di-pin atau tidak dapat dikeluarkan.")
+                print(F"[Buffer Manager] Warning: Blok {pk_str} di-pin, mencoba blok LRU berikutnya.")
+        print(f"[Buffer Manager] Warning: buffer penuh dan semua blok di-pin atau tidak dapat dikeluarkan.")
     
     def is_buffer_full(self) -> bool:
         # Mendeteksi kapan buffer sudah penuh
@@ -112,21 +138,15 @@ class BufferManager:
         # Mendeteksi kapan buffer hampir penuh (misalnya 75%)
         return len(self.buffer_data) >= (self.capacity*0.75)
     
-    ''' Logika Flush Buffer '''
+    # Logika Flush Buffer
     def flush_dirty_blocks(self):
         # Menulis semua data 'kotor' di buffer ke disk dan dipanggil saat checkpoint
-        dirty_count = 0
-        for row in list(self.buffer_data.values()):
-            if row.is_dirty:
-                self.write_block_callback(row)
-                row.is_dirty = False
-                dirty_count += 1
+        if not self.write_table_callback:
+            print("[Buffer Manager] FATAL: Write tabel tidak set selama flush!")
+            return
+        print("[Buffer Manager] Flushing semua data dan kosongkan buffer...")
         
-        if dirty_count > 0:
-            print(f"[Buffer Manager] Flush selesai: {dirty_count} blok kotor ditulis ke disk.")
-        else:
-            print(f"[Buffer Manager] Flush: Tidak ada blok kotor yang perlu ditulis.")
-        
+        self.write_table_callback(self.buffer_data.values())
         self.clear_buffer()
     
     def clear_buffer(self):
