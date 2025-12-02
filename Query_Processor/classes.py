@@ -33,7 +33,6 @@ class QueryProcessor:
         self.multiple_transaction = False
         self.result_storage = []
         self.query_storage = []
-        self.buffer = {}
 
     def execute_query(self, query: str) -> List[ExecutionResult]:
         query = query.strip()
@@ -53,7 +52,6 @@ class QueryProcessor:
             return [self._handle_begin_transaction(query)]
         
         if query_upper.startswith("COMMIT"):
-            self.buffer.clear()
             return self._handle_commit(query)
 
         if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
@@ -370,17 +368,9 @@ class QueryProcessor:
         table_name = node.val
         self._validate_ccm(table_name, "read")
         
-        if table_name in self.buffer:
-            print(f"[QP] Buffer Hit for table: {table_name}")
-            cached_rows = self.buffer[table_name]
-            return Rows(data=cached_rows.data.copy(), rows_count=cached_rows.rows_count)
-            
-        print(f"[QP] Buffer Miss. Reading from disk: {table_name}")
         data_retrieval = DataRetrieval(table=table_name, column=["*"], conditions=[])
         storage_rows = self.storage_manager.read_block(data_retrieval)
-        qp_rows = self._convert_to_qp_rows(storage_rows)
-        self.buffer[table_name] = qp_rows
-        return Rows(data=qp_rows.data.copy(), rows_count=qp_rows.rows_count)
+        return self._convert_to_qp_rows(storage_rows)
 
     def _convert_to_qp_rows(self, storage_rows) -> Rows:
         data_list = []
@@ -501,7 +491,6 @@ class QueryProcessor:
         
         dw = DataWrite(table=table, column=col, conditions=conditions, new_value=val)
         res = self.storage_manager.write_block(dw)
-        if table in self.buffer: del self.buffer[table]
         cnt = self._get_affected_count(res)
         return Rows(data=[], rows_count=cnt, message=f"Updated {cnt} rows")
 
@@ -512,7 +501,6 @@ class QueryProcessor:
         self._validate_ccm(table, "write")
         dw = DataWrite(table=table, column=cols, conditions=[], new_value=vals)
         res = self.storage_manager.write_block(dw)
-        if table in self.buffer: del self.buffer[table]
         cnt = self._get_affected_count(res)
         return Rows(data=[], rows_count=cnt, message=f"Inserted {cnt} rows")
 
@@ -523,7 +511,6 @@ class QueryProcessor:
         self._validate_ccm(table, "write")
         dd = DataDeletion(table=table, conditions=conditions)
         res = self.storage_manager.delete_block(dd)
-        if table in self.buffer: del self.buffer[table]
         return Rows(data=[], rows_count=res if isinstance(res, int) else 1, message=f"Deleted rows")
 
     def _apply_order_by(self, data: Rows, order_by_node) -> Rows:
