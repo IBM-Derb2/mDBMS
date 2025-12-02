@@ -15,7 +15,16 @@ class MockBufferManager:
         self.flush_called = False
         self.buffer_full_threshold = 0.75
         self.current_usage = 0.5
+        # Menambahkan atribut untuk menampung callback (agar tidak error saat FRM memanggil set_routine)
+        self.fetch_callback = None
+        self.write_callback = None
     
+    def set_fetch_block_routine(self, callback):
+        self.fetch_callback = callback
+        
+    def set_write_block_routine(self, callback):
+        self.write_callback = callback
+
     def is_buffer_almost_full(self):
         return self.current_usage >= self.buffer_full_threshold
     
@@ -31,7 +40,10 @@ class MockStorageEngine:
     def __init__(self):
         self.data = {}  # table -> {pk -> row_data}
         self.operations = []  # List of (op_type, table, pk, data)
-    
+        
+    def fetch_block(self, table_name, pk_value):
+        print(f"[MockStorage] Fetching {table_name} with PK {pk_value}")
+        return None
     def write_block(self, data_write):
         """Mock write_block - simulate insert/update"""
         table = data_write.table
@@ -98,9 +110,10 @@ buffer_mgr = MockBufferManager()
 storage_eng = MockStorageEngine()
 frm = FailureRecoveryManager(
     buffer_manager=buffer_mgr,
-    storage_engine=storage_eng,
+    read_disk_callback=storage_eng.fetch_block,   # Callback Baca
+    save_disk_callback=storage_eng.write_block,   # Callback Tulis
     log_directory="test_checkpoint_logs",
-    checkpoint_interval=2  # 2 seconds for testing
+    checkpoint_interval=2
 )
 
 # ========== SCENARIO: Multiple active transactions ==========

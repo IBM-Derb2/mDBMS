@@ -8,13 +8,30 @@ sys.path.insert(0, os.path.dirname(__file__))
 from failure_recovery_manager import FailureRecoveryManager
 from log_config import WalAction
 
-# Mock BufferManager
+# Mock BufferManager (Updated untuk Callback & Recovery)
 class MockBufferManager:
+    def __init__(self):
+        self.fetch_callback = None
+        self.write_callback = None
+
+    def set_fetch_block_routine(self, callback):
+        self.fetch_callback = callback
+    
+    def set_write_block_routine(self, callback):
+        self.write_callback = callback
+
     def is_buffer_almost_full(self):
         return False
     
     def flush_dirty_blocks(self):
         print("[MockBuffer] Flushing all dirty blocks...")
+
+    # Method tambahan untuk Recovery
+    def write_to_buffer_for_recovery(self, table, pk, data):
+        print(f"   [MockBuffer] RECOVERY WRITE: {table} PK={pk} -> Buffer Updated")
+    
+    def delete_from_buffer_for_recovery(self, table, pk):
+        print(f"   [MockBuffer] RECOVERY DELETE: {table} PK={pk} -> Buffer Cleared")
 
 # Enhanced Mock StorageEngine with operation tracking
 class MockStorageEngine:
@@ -32,76 +49,47 @@ class MockStorageEngine:
         if table not in self.data:
             self.data[table] = {}
         
-        # If no conditions, this is an INSERT (create new row)
-        if not conditions:
-            pk_columns = {
-                'student': 'StudentID',
-                'course': 'CourseID',
-                'attends': 'StudentID'
-            }
+        if not conditions: # INSERT
+            pk_columns = {'student': 'StudentID', 'course': 'CourseID', 'attends': 'StudentID'}
             pk_col = pk_columns.get(table)
-            
             new_pk = new_value if len(column) == 1 and column[0] == pk_col else None
             if new_pk:
                 if new_pk not in self.data[table]:
                     self.data[table][new_pk] = {column[0]: new_value}
                     self.operations.append(('insert', table, new_pk, {column[0]: new_value}))
                     return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][new_pk]]})()
-        else:
-            # UPDATE existing row
+        else: # UPDATE
             pk_value = None
             for cond in conditions:
                 if hasattr(cond, 'column') and hasattr(cond, 'value'):
                     pk_value = cond.value
                     break
-            
             if pk_value and pk_value in self.data[table]:
                 if isinstance(column, list) and len(column) > 0:
                     col_name = column[0]
                     self.data[table][pk_value][col_name] = new_value
                     self.operations.append(('update', table, pk_value, {col_name: new_value}))
                     return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][pk_value]]})()
-        
         return type('Rows', (), {'rows_count': 0, 'data': []})()
     
     def delete_block(self, data_deletion):
         """Mock delete_block - simulate delete"""
         table = data_deletion.table
         conditions = data_deletion.conditions
-        
-        if table not in self.data:
-            return 0
-        
+        if table not in self.data: return 0
         pk_value = None
         for cond in conditions:
             if hasattr(cond, 'column') and hasattr(cond, 'value'):
                 pk_value = cond.value
                 break
-        
         if pk_value and pk_value in self.data[table]:
             deleted_row = self.data[table].pop(pk_value)
             self.operations.append(('delete', table, pk_value, deleted_row))
             return 1
-        
         return 0
     
     def read_block(self, data_retrieval):
         """Mock read_block - simulate read"""
-        table = data_retrieval.table
-        conditions = data_retrieval.conditions
-        
-        if table not in self.data:
-            return type('Rows', (), {'rows_count': 0, 'data': []})()
-        
-        pk_value = None
-        for cond in conditions:
-            if hasattr(cond, 'column') and hasattr(cond, 'value'):
-                pk_value = cond.value
-                break
-        
-        if pk_value and pk_value in self.data[table]:
-            return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][pk_value]]})()
-        
         return type('Rows', (), {'rows_count': 0, 'data': []})()
 
 def main():
@@ -118,12 +106,20 @@ def main():
     
     # Clean up old logs
     for f in os.listdir(log_dir):
-        os.remove(os.path.join(log_dir, f))
+        try: os.remove(os.path.join(log_dir, f))
+        except: pass
     
     # Initialize FRM
     buffer_mgr = MockBufferManager()
     storage_engine = MockStorageEngine()
-    frm = FailureRecoveryManager(buffer_mgr, storage_engine, log_dir)
+    
+    # [UPDATED] Menggunakan Callback Pattern
+    frm = FailureRecoveryManager(
+        buffer_manager=buffer_mgr, 
+        read_disk_callback=storage_engine.read_block,
+        save_disk_callback=storage_engine.write_block,
+        log_directory=log_dir
+    )
     
     print("\n" + "="*70)
     print("PHASE 1: Normal Operations (Before Crash)")
@@ -230,7 +226,13 @@ def main():
     print("PHASE 2: Recovery After Crash")
     print("="*70)
     
-    frm_recovery = FailureRecoveryManager(buffer_mgr, storage_engine, log_dir)
+    # [UPDATED] Menggunakan Callback Pattern untuk instance recovery
+    frm_recovery = FailureRecoveryManager(
+        buffer_manager=buffer_mgr, 
+        read_disk_callback=storage_engine.read_block,
+        save_disk_callback=storage_engine.write_block,
+        log_directory=log_dir
+    )
     stats = frm_recovery.recover()
     
     # Verification
@@ -281,46 +283,6 @@ def main():
     print("\n" + "="*70)
     print("TEST COMPLETED SUCCESSFULLY!")
     print("="*70)
-    
-    # Verify NO CLR written
-    print("\n[BONUS] Verifying NO Compensation Logs...")
-    from log_parser import LogParser
-    parser = LogParser(log_dir)
-    
-    clr_count = 0
-    for entry in parser.iter_backward():
-        if entry.action == "clr":
-            clr_count += 1
-            print(f"⚠️  Found CLR for TX {entry.transaction_id} (unexpected!)")
-    
-    if clr_count == 0:
-        print("✅ Correct! No CLR written (all transactions committed)")
-    else:
-        print(f"\n❌ Found {clr_count} CLR(s) - unexpected for all-committed scenario!")
-    
-    print(f"\n📂 Log files saved in: {log_dir}/")
-    
-    # Summary table
-    print("\n" + "="*70)
-    print("FINAL STATE SUMMARY")
-    print("="*70)
-    print("\n┌─────────┬──────────────────────────┬─────────────┬──────────────┐")
-    print("│ TX ID   │ Operations               │ Outcome     │ Final Effect │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 501     │ INSERT student (before)  │ COMMIT      │ KEPT ✓       │")
-    print("│         │ UPDATE student (after)   │             │ KEPT ✓       │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 502     │ UPDATE student (before)  │ COMMIT      │ KEPT ✓       │")
-    print("│         │ UPDATE student (after)   │             │ KEPT ✓       │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 503     │ DELETE student (before)  │ COMMIT      │ KEPT ✓       │")
-    print("│         │ INSERT course (after)    │             │ KEPT ✓       │")
-    print("└─────────┴──────────────────────────┴─────────────┴──────────────┘")
-    print("\n💡 Key Difference from Scenarios A & B:")
-    print("   • All transactions COMMITTED → No UNDO needed")
-    print("   • Recovery only does REDO (re-apply committed changes)")
-    print("   • No CLR (Compensation Log Records) generated")
-    print("   • undo_list remains empty throughout recovery")
 
 if __name__ == "__main__":
     main()

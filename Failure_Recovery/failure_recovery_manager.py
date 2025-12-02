@@ -18,7 +18,7 @@ class FailureRecoveryManager:
     - Background thread monitors buffer and triggers checkpoint
     """
     
-def __init__(self, buffer_manager, 
+    def __init__(self, buffer_manager, 
                  read_disk_callback: Callable[[str, dict], Any], 
                  save_disk_callback: Callable[[Any], Any],
                  log_directory: str = "wal_logs",
