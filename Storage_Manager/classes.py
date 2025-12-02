@@ -1,15 +1,14 @@
 from dataclasses import dataclass, field
-from typing import List, Any, Dict
-
-@dataclass
-class Rows:
-    data: List[dict] = field(default_factory=list)
+from typing import List, Any
 
 @dataclass
 class Table:
     name: str
-    pk_column: str # Nama kolom yang berfungsi sebagai PK
-    data: List[Dict[str, Any]] = field(default_factory=list)
+    data: List[dict] = field(default_factory=list)
+
+@dataclass
+class Rows:
+    data: List[dict] = field(default_factory=list)
 
 class StorageEngine:
     
