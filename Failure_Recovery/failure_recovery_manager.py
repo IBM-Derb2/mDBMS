@@ -19,8 +19,8 @@ class FailureRecoveryManager:
     """
     
     def __init__(self, buffer_manager, 
-                 read_disk_callback: Callable[[str, dict], Any], 
-                 save_disk_callback: Callable[[Any], Any],
+                 load_table_callback: Callable[[str], Any],
+                 save_buffer_callback: Callable[[Any], Any],
                  log_directory: str = "wal_logs",
                  checkpoint_interval: int = 10):
         """
@@ -36,8 +36,8 @@ class FailureRecoveryManager:
         # References to other managers
         self.buffer_manager = buffer_manager
 
-        self.buffer_manager.set_fetch_block_routine(read_disk_callback)
-        self.buffer_manager.set_write_block_routine(save_disk_callback)
+        self.buffer_manager.set_load_table_routine(load_table_callback)
+        self.buffer_manager.set_save_buffer_routine(save_buffer_callback)
         
         # WAL components
         self.wal_writer = LogWriter(log_directory)
