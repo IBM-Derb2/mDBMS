@@ -1,9 +1,10 @@
- 
+
 from Query_Processor.classes import QueryProcessor
 from Query_Optimizer.optimization_engine import OptimizationEngine
 from Concurrency_Control_Manager.classes import ConcurrencyControlManager
 from Storage_Manager.storage_engine import StorageEngine
 from Failure_Recovery.classes import FailureRecovery
+
 
 def main():
     print("--- mini Database Management System (mDBMS) ---")
@@ -14,6 +15,10 @@ def main():
     cc_manager = ConcurrencyControlManager()
     fr_manager = FailureRecovery()
 
+    # Connect CCM to Storage Manager and FRM
+    cc_manager.set_storage_manager(storage)
+    cc_manager.set_failure_recovery_manager(fr_manager)
+
     qp = QueryProcessor(
         optimizer=optimizer,
         storage_manager=storage,
@@ -22,14 +27,14 @@ def main():
     )
 
     print("\n[mDBMS] Ready. Type your SQL query or 'exit' to quit.")
-    
+
     while True:
         try:
             query = input("mDBMS> ")
             if query.lower() == 'exit':
                 print("[mDBMS] Shutting down.")
                 break
-            
+
             if not query:
                 continue
 
@@ -48,6 +53,7 @@ def main():
 
         except Exception as e:
             print(f"[mDBMS Error] An unexpected error occurred: {e}")
+
 
 if __name__ == "__main__":
     main()

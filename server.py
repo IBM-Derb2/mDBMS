@@ -10,6 +10,7 @@ from Failure_Recovery.classes import FailureRecovery
 HOST = 'localhost'
 PORT = 8080
 
+
 class Server:
     _instance = None
     _lock = threading.Lock()
@@ -32,6 +33,10 @@ class Server:
         self.storage = StorageEngine()
         self.cc_manager = ConcurrencyControlManager()
         self.fr_manager = FailureRecovery()
+
+        # Connect CCM to Storage Manager and FRM
+        self.cc_manager.set_storage_manager(self.storage)
+        self.cc_manager.set_failure_recovery_manager(self.fr_manager)
 
         self.qp = QueryProcessor(
             optimizer=self.optimizer,
@@ -60,17 +65,23 @@ class Server:
 
                     for row in rows:
                         for col in columns:
-                            col_widths[col] = max(col_widths[col], len(str(row[col])))
+                            col_widths[col] = max(
+                                col_widths[col], len(str(row[col])))
 
-                    header = "| " + " | ".join(col.ljust(col_widths[col]) for col in columns) + " |"
-                    separator = "+-" + "-+-".join("-" * col_widths[col] for col in columns) + "-+"
+                    header = "| " + \
+                        " | ".join(col.ljust(col_widths[col])
+                                   for col in columns) + " |"
+                    separator = "+-" + \
+                        "-+-".join("-" * col_widths[col]
+                                   for col in columns) + "-+"
 
                     output.append("\n" + separator)
                     output.append(header)
                     output.append(separator)
 
                     for row in rows:
-                        output.append("| " + " | ".join(str(row[col]).ljust(col_widths[col]) for col in columns) + " |")
+                        output.append(
+                            "| " + " | ".join(str(row[col]).ljust(col_widths[col]) for col in columns) + " |")
 
                     output.append(separator)
                     output.append(f"\n({result.rows_count} rows)\n")
@@ -122,11 +133,13 @@ class Server:
             print(f"[Server] Error handling client {client_id}: {e}")
         finally:
             client_socket.close()
-            print(f"[Server] Client {client_id} disconnected from {client_address}")
+            print(
+                f"[Server] Client {client_id} disconnected from {client_address}")
 
     def start(self, host=HOST, port=PORT):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.settimeout(1.0)
 
         try:
@@ -160,6 +173,7 @@ class Server:
                 self.server_socket.close()
             print("[Server] Server stopped.")
 
+
 def main():
     parser = argparse.ArgumentParser(
         description='mDBMS Server',
@@ -179,6 +193,7 @@ def main():
         print("\n[Server] Server interrupted by user")
     except Exception as e:
         print(f"[Server] Fatal error: {e}")
+
 
 if __name__ == "__main__":
     main()
