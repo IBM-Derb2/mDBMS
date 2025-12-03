@@ -2,7 +2,7 @@ import threading
 import time
 import json
 from datetime import datetime
-from typing import Set, Optional
+from typing import Any, Callable, Callable, Set, Optional
 from log_config import WalType, WalAction
 from log_writer import LogWriter
 from log_parser import LogParser
@@ -18,7 +18,9 @@ class FailureRecoveryManager:
     - Background thread monitors buffer and triggers checkpoint
     """
     
-    def __init__(self, buffer_manager, storage_engine, 
+    def __init__(self, buffer_manager, 
+                 load_table_callback: Callable[[str], Any],
+                 save_buffer_callback: Callable[[Any], Any],
                  log_directory: str = "wal_logs",
                  checkpoint_interval: int = 10):
         """
@@ -26,13 +28,16 @@ class FailureRecoveryManager:
         
         Args:
             buffer_manager: Reference to BufferManager
-            storage_engine: Reference to StorageEngine  
+            read_disk_callback: Fungsi dari SM untuk membaca disk (fetch)
+            save_disk_callback: Fungsi dari SM untuk menyimpan ke disk (flush)
             log_directory: Directory untuk WAL files
             checkpoint_interval: Checkpoint check interval (seconds)
         """
         # References to other managers
         self.buffer_manager = buffer_manager
-        self.storage_engine = storage_engine
+
+        self.buffer_manager.set_load_table_routine(load_table_callback)
+        self.buffer_manager.set_save_buffer_routine(save_buffer_callback)
         
         # WAL components
         self.wal_writer = LogWriter(log_directory)

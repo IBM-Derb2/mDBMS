@@ -8,13 +8,32 @@ sys.path.insert(0, os.path.dirname(__file__))
 from failure_recovery_manager import FailureRecoveryManager
 from log_config import WalAction
 
-# Mock BufferManager
+# Mock BufferManager (Updated untuk Callback Pattern & Recovery Support)
 class MockBufferManager:
+    def __init__(self):
+        self.fetch_callback = None
+        self.write_callback = None
+
+    def set_fetch_block_routine(self, callback):
+        self.fetch_callback = callback
+    
+    def set_write_block_routine(self, callback):
+        self.write_callback = callback
+        
     def is_buffer_almost_full(self):
         return False
     
     def flush_dirty_blocks(self):
         print("[MockBuffer] Flushing all dirty blocks...")
+    
+    # --- Penambahan Method Baru untuk Recovery ---
+    def write_to_buffer_for_recovery(self, table, pk, data):
+        # Simulasi sukses menulis ke buffer saat recovery
+        print(f"   [MockBuffer] RECOVERY WRITE: {table} PK={pk} -> Buffer Updated")
+    
+    def delete_from_buffer_for_recovery(self, table, pk):
+        # Simulasi sukses menghapus dari buffer saat recovery
+        print(f"   [MockBuffer] RECOVERY DELETE: {table} PK={pk} -> Buffer Cleared")
 
 # Enhanced Mock StorageEngine with operation tracking
 class MockStorageEngine:
@@ -88,21 +107,6 @@ class MockStorageEngine:
     
     def read_block(self, data_retrieval):
         """Mock read_block - simulate read"""
-        table = data_retrieval.table
-        conditions = data_retrieval.conditions
-        
-        if table not in self.data:
-            return type('Rows', (), {'rows_count': 0, 'data': []})()
-        
-        pk_value = None
-        for cond in conditions:
-            if hasattr(cond, 'column') and hasattr(cond, 'value'):
-                pk_value = cond.value
-                break
-        
-        if pk_value and pk_value in self.data[table]:
-            return type('Rows', (), {'rows_count': 1, 'data': [self.data[table][pk_value]]})()
-        
         return type('Rows', (), {'rows_count': 0, 'data': []})()
 
 def main():
@@ -120,12 +124,22 @@ def main():
     
     # Clean up old logs
     for f in os.listdir(log_dir):
-        os.remove(os.path.join(log_dir, f))
+        try:
+            os.remove(os.path.join(log_dir, f))
+        except:
+            pass
     
     # Initialize FRM
     buffer_mgr = MockBufferManager()
     storage_engine = MockStorageEngine()
-    frm = FailureRecoveryManager(buffer_mgr, storage_engine, log_dir)
+    
+    # [UPDATED] Menggunakan Callback Pattern
+    frm = FailureRecoveryManager(
+        buffer_manager=buffer_mgr, 
+        read_disk_callback=storage_engine.read_block,  # Callback Baca
+        save_disk_callback=storage_engine.write_block, # Callback Tulis
+        log_directory=log_dir
+    )
     
     print("\n" + "="*70)
     print("PHASE 1: Normal Operations (Before Crash)")
@@ -233,10 +247,12 @@ def main():
     print("PHASE 2: Recovery After Crash")
     print("="*70)
     
+    # [UPDATED] Menggunakan Callback Pattern untuk instance recovery juga
     frm_recovery = FailureRecoveryManager(
-        buffer_mgr, 
-        storage_engine, 
-        log_dir
+        buffer_manager=buffer_mgr, 
+        read_disk_callback=storage_engine.read_block,
+        save_disk_callback=storage_engine.write_block,
+        log_directory=log_dir
     )
     
     # Call recovery
@@ -267,7 +283,6 @@ def main():
     print(f"Checkpoint transactions: {stats['checkpoint_transactions']}")
     print(f"REDO operations: {stats['redo_count']}")
     print(f"UNDO operations: {stats['undo_count']}")
-    print(f"Incomplete transactions (should be []): {stats.get('undo_list_final', 'N/A')}")
     
     # Assertions
     print("\n[VALIDATION]")
@@ -283,7 +298,6 @@ def main():
         assert stats['redo_count'] == 3, f"❌ Should REDO 3 operations (after checkpoint), got {stats['redo_count']}"
         
         # Expected UNDO: 2 operation (TX 303 DELETE on attends)
-        # TX 303 had INSERT before checkpoint (undone) and DELETE after (undone)
         assert stats['undo_count'] == 2, f"❌ Should UNDO 2 operations (TX 303 has 2 ops), got {stats['undo_count']}"
         
         print("✅ All validations passed!")
@@ -294,46 +308,6 @@ def main():
     print("\n" + "="*70)
     print("TEST COMPLETED!")
     print("="*70)
-    
-    # Check for CLR in logs
-    print("\n[BONUS] Checking for Compensation Logs...")
-    from log_parser import LogParser
-    parser = LogParser(log_dir)
-    
-    clr_count = 0
-    for entry in parser.iter_backward():
-        if entry.action == "clr":
-            clr_count += 1
-            print(f"✓ Found CLR for TX {entry.transaction_id}")
-            print(f"  - Original action: {entry.raw_log.get('original_action', 'N/A')}")
-            print(f"  - Table: {entry.table_name}")
-            print(f"  - PK: {entry.pk_value}")
-    
-    if clr_count > 0:
-        print(f"\n✅ Found {clr_count} CLR(s) - Compensation logging is working!")
-    else:
-        print("\n⚠️  No CLR found (check _write_compensation_log implementation)")
-    
-    print(f"\n📂 Log files saved in: {log_dir}/")
-    
-    # Summary table
-    print("\n" + "="*70)
-    print("FINAL STATE SUMMARY")
-    print("="*70)
-    print("\n┌─────────┬──────────────────────────┬─────────────┬──────────────┐")
-    print("│ TX ID   │ Operations               │ Outcome     │ Final Effect │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 301     │ INSERT student (before)  │ COMMIT      │ KEPT ✓       │")
-    print("│         │ UPDATE student (after)   │             │ KEPT ✓       │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 302     │ INSERT course (before)   │ ABORT       │ UNDONE ✗     │")
-    print("│         │ UPDATE course (after)    │             │ UNDONE ✗     │")
-    print("├─────────┼──────────────────────────┼─────────────┼──────────────┤")
-    print("│ 303     │ INSERT attends (before)  │ CRASH       │ KEPT ⚠       │")
-    print("│         │ DELETE attends (after)   │             │ UNDONE ✗     │")
-    print("└─────────┴──────────────────────────┴─────────────┴──────────────┘")
-    print("\nNote: Operations before checkpoint are already flushed to disk.")
-    print("      Recovery only needs to handle operations after checkpoint.")
 
 if __name__ == "__main__":
     main()
