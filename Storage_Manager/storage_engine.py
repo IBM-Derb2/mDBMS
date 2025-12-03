@@ -466,11 +466,10 @@ class StorageEngine:
             with open(schema_path, "rb") as f:
                 schema_bin = f.read()
             schema = self.serializer.deserialize_schema(schema_bin)
-            columns = schema["columns"]
 
             # serialize
             binary_data = self.serializer.serialize_with_blocks(
-                table.data, columns
+                table.data, schema
             )
 
             # write
