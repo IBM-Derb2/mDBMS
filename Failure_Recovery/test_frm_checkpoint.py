@@ -19,10 +19,10 @@ class MockBufferManager:
         self.fetch_callback = None
         self.write_callback = None
     
-    def set_fetch_block_routine(self, callback):
+    def set_load_table_routine(self, callback):
         self.fetch_callback = callback
         
-    def set_write_block_routine(self, callback):
+    def set_save_buffer_routine(self, callback):
         self.write_callback = callback
 
     def is_buffer_almost_full(self):
@@ -110,8 +110,8 @@ buffer_mgr = MockBufferManager()
 storage_eng = MockStorageEngine()
 frm = FailureRecoveryManager(
     buffer_manager=buffer_mgr,
-    read_disk_callback=storage_eng.fetch_block,   # Callback Baca
-    save_disk_callback=storage_eng.write_block,   # Callback Tulis
+    load_table_callback=storage_eng.fetch_block,   # Callback Baca
+    save_buffer_callback=storage_eng.write_block,   # Callback Tulis
     log_directory="test_checkpoint_logs",
     checkpoint_interval=2
 )

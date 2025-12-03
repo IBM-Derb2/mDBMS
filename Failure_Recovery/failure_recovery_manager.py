@@ -97,25 +97,7 @@ class FailureRecoveryManager:
             print(f"[FRM] TX {tx_id} ended (active: {len(self.active_transactions)})")
     
     def write_log_entry(self, tx_id: int, action: WalAction):
-        """
-        Log START/COMMIT/ABORT entries to WAL.
-        Called by CC Manager.
-        
-        Args:
-            tx_id: Transaction ID
-            action: START, COMMIT, or ABORT
-        """
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": WalType.EXECUTION.value,
-            "action": action.value,
-            "transaction_id": tx_id
-            # No table/record info for lifecycle events
-        }
-        
-        log_str = json.dumps(log_entry)
-        self.wal_writer.write_to_file(log_str)
-        
+        self.wal_writer.log_lifecycle(tx_id, action)
         print(f"[FRM] Logged {action.value.upper()} for TX {tx_id}")
 
     
@@ -123,44 +105,13 @@ class FailureRecoveryManager:
     
     def log_write(self, tx_id: int, table: str, pk: dict, 
                   old_data: dict, new_data: dict):
-        """
-        Log INSERT/UPDATE/DELETE operations to WAL.
-        Called by BufferManager during write_block.
+        self.wal_writer.log_operation(tx_id, table, pk, old_data, new_data)
         
-        Determines action type:
-        - old_data is None → INSERT
-        - new_data is None → DELETE  
-        - both not None → UPDATE
-        
-        Args:
-            tx_id: Transaction ID
-            table: Table name
-            pk: Primary key dict
-            old_data: Data before change (None for INSERT)
-            new_data: Data after change (None for DELETE)
-        """
-        # Determine action type (INSERT/UPDATE/DELETE)
-        action = self._determine_action(old_data, new_data)
-        
-        # Create WAL entry (Minimalist approach - no redundant fields)
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": WalType.EXECUTION.value,
-            "action": action.value,
-            "transaction_id": tx_id,
-            "tablename": table,
-            "pk_value": pk,
-            "record_before": old_data,
-            "record_after": new_data
-        }
-        
-        # Convert to JSON string
-        log_str = json.dumps(log_entry)
-        
-        # Write to WAL file
-        self.wal_writer.write_to_file(log_str)
-        
-        print(f"[FRM] Logged {action.value.upper()} for TX {tx_id} on {table}")
+        # Kita bisa print manual untuk debug
+        action = "UPDATE"
+        if old_data is None: action = "INSERT"
+        elif new_data is None: action = "DELETE"
+        print(f"[FRM] Logged {action} for TX {tx_id} on {table}")
 
     
     # ========== ABORT & ROLLBACK ==========
@@ -207,14 +158,7 @@ class FailureRecoveryManager:
         print(f"[FRM] Flush completed - all dirty blocks now persisted")
         
         # Step 2: Write checkpoint entry to WAL
-        checkpoint_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": WalType.CHECKPOINT.value,
-            "ongoing_transactions": ongoing_transactions
-        }
-        
-        checkpoint_str = json.dumps(checkpoint_entry)
-        self.wal_writer.write_to_file(checkpoint_str)
+        self.wal_writer.log_checkpoint(ongoing_transactions)
         print(f"[FRM] Checkpoint entry written to WAL")
         
         # Step 3: Clear WAL entries before oldest ongoing transaction
