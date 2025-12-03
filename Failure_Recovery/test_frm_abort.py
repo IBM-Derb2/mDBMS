@@ -25,10 +25,10 @@ class MockBufferManager:
         self.fetch_callback = None
         self.write_callback = None
 
-    def set_fetch_block_routine(self, callback):
+    def set_load_table_routine(self, callback):
         self.fetch_callback = callback
     
-    def set_write_block_routine(self, callback):
+    def set_save_buffer_routine(self, callback):
         self.write_callback = callback
 
     def is_buffer_almost_full(self):
@@ -112,8 +112,8 @@ buffer_mgr = MockBufferManager()
 # [UPDATED] Menggunakan Callback Pattern
 frm = FailureRecoveryManager(
     buffer_manager=buffer_mgr,
-    read_disk_callback=real_read_callback if STORAGE_AVAILABLE else storage_eng.read_block,
-    save_disk_callback=real_write_callback if STORAGE_AVAILABLE else storage_eng.write_block,
+    load_table_callback=real_read_callback if STORAGE_AVAILABLE else storage_eng.read_block,
+    save_buffer_callback=real_write_callback if STORAGE_AVAILABLE else storage_eng.write_block,
     log_directory="test_abort_logs"
 )
 
