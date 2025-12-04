@@ -1,9 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
 from .transaction_model import TransactionManager, TransactionStatus
 from .strategy_interface import ConcurrencyStrategy
-from .undo_log import UndoLogManager
 
 
 @dataclass
@@ -53,7 +51,8 @@ class EndTransactionManager:
 
             # Perform rollback if aborting
             if not is_commit and self.undo_log_manager:
-                rolled_back = self.undo_log_manager.rollback_transaction(transaction_id)
+                rolled_back = self.undo_log_manager.rollback_transaction(
+                    transaction_id)
                 if rolled_back:  # Check if list is not None/empty
                     report.add_message(
                         f"Rolled back {len(rolled_back)} operations for TX {transaction_id}"
@@ -125,7 +124,8 @@ class EndTransactionManager:
                 valid = False
 
             # Cek write-write conflict
-            write_write_conflict = tx.write_set.intersection(other_tx.write_set)
+            write_write_conflict = tx.write_set.intersection(
+                other_tx.write_set)
             if write_write_conflict:
                 errors.append(
                     f"Write-Write conflict dengan TX {other_tx_id} "
@@ -139,7 +139,8 @@ class EndTransactionManager:
         """Perform validation if strategy requires it."""
         # Check if strategy has validation method
         if hasattr(self.strategy, "validate_for_commit"):
-            is_valid, errors = self.strategy.validate_for_commit(transaction_id)
+            is_valid, errors = self.strategy.validate_for_commit(
+                transaction_id)
             return {"valid": is_valid, "errors": errors}
 
         # Default validation - check conflicts with committed transactions

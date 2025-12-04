@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Set, Union
-from dataclasses import dataclass, field
+from typing import Any, Literal
+from dataclasses import dataclass
 
 @dataclass
 class Action:
-    action: Union['write', 'read']
+    action: Literal['write', 'read']
 
 @dataclass
 class Response:

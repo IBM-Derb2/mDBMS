@@ -1,5 +1,6 @@
 from typing import Any
 import threading
+
 from Concurrency_Control_Manager.lib.strategy_interface import ConcurrencyStrategy, Response
 from Concurrency_Control_Manager.lib.lock_based_strategy import LockBasedStrategy
 from Concurrency_Control_Manager.lib.timestamp_based_strategy import TimestampBasedStrategy
@@ -9,9 +10,6 @@ from Concurrency_Control_Manager.lib.transaction_model import TransactionManager
 from Concurrency_Control_Manager.lib.transaction_coordinator import TransactionCoordinator
 from Concurrency_Control_Manager.lib.deadlock_detector import DeadlockDetector
 from Concurrency_Control_Manager.lib.transaction_id_generator import TransactionIdGenerator
-from Concurrency_Control_Manager.lib.undo_log import UndoLogManager
-from Concurrency_Control_Manager.lib.failure_recovery_adapter import FailureRecoveryAdapter
-from Concurrency_Control_Manager.lib.mock_storage import MockStorageManager
 
 
 class ConcurrencyControlManager:
@@ -19,60 +17,28 @@ class ConcurrencyControlManager:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self):
+    def __init__(self, frm):
         if hasattr(self, "_initialized"):
             return
 
         self.tx_manager = TransactionManager()
-        # Use FailureRecoveryAdapter instead of UndoLogManager for integration
-        self.undo_log_manager = FailureRecoveryAdapter(log_directory="logs")
-        self.storage_manager = None  # Will be set via set_storage_manager()
+        self.frm = frm
         self.strategy: ConcurrencyStrategy = LockBasedStrategy()
         self.id_generator = TransactionIdGenerator()
-        self.coordinator = TransactionCoordinator(
-            self.tx_manager, self.strategy)
+        self.coordinator = TransactionCoordinator(self.tx_manager, self.strategy)
         self.deadlock_detector = DeadlockDetector(self.tx_manager)
 
-        # Set undo log manager in end transaction manager
-        self.coordinator.end_tx_manager.undo_log_manager = self.undo_log_manager
-
-        # Connect deadlock detector to coordinator
         self.coordinator.set_deadlock_detector(self.deadlock_detector)
-        self.frm = None  # Will be set via set_failure_recovery_manager()
         self._initialized = True
 
-    def set_failure_recovery_manager(self, frm):
-        """Connect FRM for transaction lifecycle logging and recovery"""
-        self.frm = frm
-        # Also connect to undo log adapter if needed
-        if hasattr(self.undo_log_manager, 'set_frm'):
-            self.undo_log_manager.set_frm(frm)
-        print("[CCM] Failure Recovery Manager connected")
-
-    def set_storage_manager(self, storage_manager):
-        """Set real storage manager for data operations and rollback"""
-        self.storage_manager = storage_manager
-        self.undo_log_manager.set_storage_manager(storage_manager)
-        print("[CCM] Storage Manager connected")
-
-    def begin_transaction(self) -> int:
-        tx_id = self.id_generator.generate()
+    def begin_transaction(self, client_ip: str = None, client_port: int = None) -> str:
+        tx_id = self.id_generator.generate(client_ip, client_port)
         self.tx_manager.create_transaction(tx_id)
-        self.undo_log_manager.log_start(tx_id)
 
-        # Notify FRM about transaction start (callback pattern)
-        if self.frm:
-            self.frm.notify_transaction_start(tx_id)
-            # Also log START to WAL
-            from Failure_Recovery.log_config import WalAction
-            self.frm.write_log_entry(tx_id, WalAction.START)
+        self.frm.get_log_history_manager().log_start(tx_id)
+        self.frm.notify_transaction_start(tx_id)
+        from Failure_Recovery.types import WalAction
+        self.frm.write_log_entry(tx_id, WalAction.START)
 
         return tx_id
 
@@ -88,24 +54,33 @@ class ConcurrencyControlManager:
 
     def commit_transaction(self, transaction_id: int):
         self.coordinator.commit(transaction_id)
-        self.undo_log_manager.log_commit(transaction_id)
 
-        # Notify FRM about commit (callback pattern)
-        if self.frm:
-            # Log COMMIT to WAL
-            from Failure_Recovery.log_config import WalAction
-            self.frm.write_log_entry(transaction_id, WalAction.COMMIT)
-            # Remove from active transactions
-            self.frm.notify_transaction_end(transaction_id)
+        self.frm.get_log_history_manager().log_commit(transaction_id)
+        from Failure_Recovery.types import WalAction
+        self.frm.write_log_entry(transaction_id, WalAction.COMMIT)
+
+        # Flush dirty blocks to disk on commit
+        self.frm.buffer_manager.flush_dirty_blocks()
+
+        self.frm.notify_transaction_end(transaction_id)
 
     def abort_transaction(self, transaction_id: int, reason: str = "User requested"):
         self.coordinator.abort(transaction_id, reason)
 
-        # Trigger FRM rollback (abort_transaction does undo)
-        if self.frm:
-            self.frm.abort_transaction(transaction_id)
-            # Remove from active transactions
-            self.frm.notify_transaction_end(transaction_id)
+        self.frm.get_log_history_manager().log_abort(transaction_id)
+        self.frm.abort_transaction(transaction_id)
+        self.frm.notify_transaction_end(transaction_id)
+
+    def log_operation(self, transaction_id: int, action: str, table_name: str):
+        log_history = self.frm.get_log_history_manager()
+        if action == "insert":
+            log_history.log_insert(transaction_id, table_name)
+        elif action == "update":
+            log_history.log_update(transaction_id, table_name)
+        elif action == "delete":
+            log_history.log_delete(transaction_id, table_name)
+        elif action == "select":
+            log_history.log_select(transaction_id, table_name)
 
     def check_deadlock(self) -> bool:
         return self.deadlock_detector.check_and_resolve(self.abort_transaction)
