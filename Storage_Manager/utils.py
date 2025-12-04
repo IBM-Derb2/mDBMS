@@ -1,16 +1,17 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Literal, Union, Any
 
+from globalsy.classes.rows import Rows
+
 SearchMode = Literal["linear", "index"]
-OperationType = Literal['=', '<>', '>', '>=', '<', '<=']
+OperationType = Literal["=", "<>", ">", ">=", "<", "<="]
 IndexType = Literal["b+ tree", "hash"]
 
 
 @dataclass
-class Rows:
-    data: Any = field(default_factory=list)
-    rows_count: int = 0
-    idx: List[int] = field(default_factory=list)
+class Table:
+    name: str
+    data: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -26,7 +27,7 @@ class DataRetrieval:
     column: list[str]
     conditions: Optional[list[Condition]] = None
     search_type: SearchMode = "linear"
-    index_column: Optional[str] = None 
+    index_column: Optional[str] = None
 
 
 @dataclass
@@ -35,12 +36,14 @@ class DataWrite:
     column: List[str]
     conditions: List[Condition]
     new_value: Any
+    transaction_id: Optional[str] = None
 
 
 @dataclass
 class DataDeletion:
     table: str
     conditions: Optional[List[Condition]] = None
+    transaction_id: Optional[str] = None
 
 
 @dataclass
