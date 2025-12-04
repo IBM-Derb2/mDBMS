@@ -1,242 +1,120 @@
-from typing import Optional, Dict, Any, List
-from enum import Enum
-from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, field
 from datetime import datetime
+from .transaction_model import TransactionManager, TransactionStatus
+from .strategy_interface import ConcurrencyStrategy
 from .undo_log import UndoLogManager
-from .transaction_model import TransactionStatus  
-
-
-class EndTransactionResult(Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    VALIDATION_FAILED = "validation_failed"
-    RESOURCE_CLEANUP_FAILED = "resource_cleanup_failed"
 
 
 @dataclass
 class EndTransactionReport:
+    """Result report for end transaction operation."""
+
     transaction_id: int
-    result: EndTransactionResult
-    timestamp: datetime
-    locks_released: List[str]
-    resources_cleaned: List[str]
-    validation_errors: List[str]
-    execution_time_ms: float
-    
-    def __repr__(self):
-        return (f"EndTxReport(TX={self.transaction_id}, "
-                f"Result={self.result.value}, "
-                f"Locks Released={len(self.locks_released)}, "
-                f"Time={self.execution_time_ms:.2f}ms)")
+    success: bool = False
+    messages: List[str] = field(default_factory=list)
+
+    def add_message(self, message: str):
+        self.messages.append(message)
+
+    def __str__(self):
+        status = "SUCCESS" if self.success else "FAILED"
+        msg_text = "\n".join(f"  - {msg}" for msg in self.messages)
+        return f"End Transaction TX {self.transaction_id}: {status}\n{msg_text}"
 
 
 class EndTransactionManager:
-
-    def __init__(self, tx_manager, strategy, undo_log_manager: Optional[UndoLogManager] = None):
+    def __init__(self, tx_manager: TransactionManager, strategy: ConcurrencyStrategy):
         self.tx_manager = tx_manager
         self.strategy = strategy
-        self.undo_log_manager = undo_log_manager if undo_log_manager else UndoLogManager()
-        self.end_transaction_history: List[EndTransactionReport] = []
-        self.verbose = True
-    
-    def end_transaction(self, transaction_id: int, is_commit: bool = True) -> EndTransactionReport:
-        start_time = datetime.now()
-        locks_released = []
-        resources_cleaned = []
-        validation_errors = []
-        result = EndTransactionResult.SUCCESS
-        
+        self.undo_log_manager = None  # Will be set by ConcurrencyControlManager
+
+    def end_transaction(
+        self, transaction_id: int, is_commit: bool = True
+    ) -> EndTransactionReport:
+        """Execute end transaction with undo log support."""
+        # Initialize report first
+        report = EndTransactionReport(transaction_id=transaction_id)
+
         try:
-            # validate that transaksi exists
+            # Validate transaction exists and is active
             tx = self.tx_manager.get_transaction(transaction_id)
             if not tx:
-                validation_errors.append(f"Transaction {transaction_id} tidak ditemukan")
-                result = EndTransactionResult.VALIDATION_FAILED
-                raise ValueError(f"Transaction {transaction_id} tidak ditemukan")
-            
-            if self.verbose:
-                print(f"\n{'='*60}")
-                print(f"Mulai end transaction untuk TX {transaction_id}")
-                print(f"Mode: {'COMMIT' if is_commit else 'ABORT'}")
-                print(f"Status saat ini: {tx.status.value}")
-                print(f"{'='*60}")
-            
-            if is_commit:
-                # Check if validation is needed for this strategy
-                if self._validation_needed_for_strategy():
-                    if self.verbose:
-                        print(f"[EndTxManager] Performing final validation for {self.strategy.__class__.__name__}")
-                    
-                    # Use strategy-specific validation if available
-                    if hasattr(self.strategy, 'validate_for_commit'):
-                        is_valid, strategy_errors = self.strategy.validate_for_commit(transaction_id)
-                        if not is_valid:
-                            validation_errors.extend(strategy_errors)
-                            result = EndTransactionResult.VALIDATION_FAILED
-                            if self.verbose:
-                                print(f"[FAIL] Validasi strategi GAGAL:")
-                                for error in strategy_errors:
-                                    print(f"  - {error}")
-                            is_commit = False
-                    else:
-                        # Fallback to generic validation
-                        validation_result = self._perform_final_validation(transaction_id)
-                        if not validation_result['valid']:
-                            validation_errors.extend(validation_result['errors'])
-                            result = EndTransactionResult.VALIDATION_FAILED
-                            if self.verbose:
-                                print(f"[FAIL] Validasi akhir GAGAL:")
-                                for error in validation_result['errors']:
-                                    print(f"  - {error}")
-                            is_commit = False
-                else:
-                    if self.verbose:
-                        print(f"[EndTxManager] Final validation not required for {self.strategy.__class__.__name__}")
-                        print(f"[EndTxManager] Conflict prevention already handled by strategy mechanism")
-            
-            # get daftar resources yang perlu di cleanup
-            accessed_objects = tx.get_accessed_objects()
-            if self.verbose:
-                print(f"\nResources yang diakses TX {transaction_id}:")
-                print(f"\n\nRead Set: {tx.read_set}")
-                print(f"\n\nWrite Set: {tx.write_set}")
-                
-            locks_released = self._release_resources_list(transaction_id, accessed_objects)
-            
-            if is_commit and result == EndTransactionResult.SUCCESS:
-                if self.verbose:
-                    print(f"\nMelakukan COMMIT...")
-                
-                # commit transaction status
-                self.tx_manager.commit_transaction(transaction_id)
-                resources_cleaned.append(f"Transaction {transaction_id} committed")
-                
-                # mark as committed in strategy if needed
-                if hasattr(self.strategy, 'commit_validation'):
-                    self.strategy.commit_validation(transaction_id)
-                
-                # clean up undo logs
-                self.undo_log_manager.commit_transaction(transaction_id)
-                resources_cleaned.append(f"Undo logs cleared for TX {transaction_id}")
-                
-            else:
-                if self.verbose:
-                    print(f"\nMelakukan ABORT...")
-                
-                # rollback changes using undo log
-                if self.undo_log_manager.has_logs(transaction_id):
-                    rolled_back = self.undo_log_manager.abort_transaction(transaction_id)
-                    resources_cleaned.append(f"Rolled back {len(rolled_back)} operations for TX {transaction_id}")
-                
-                # strategy specific abort cleanup
-                if hasattr(self.strategy, 'abort_transaction'):
-                    self.strategy.abort_transaction(transaction_id)
-                    resources_cleaned.append(f"Strategy abort cleanup for TX {transaction_id}")
-                
-                # Mark as failed and aborted
-                self.tx_manager.fail_transaction(
-                    transaction_id,
-                    "Validation failed" if validation_errors else "User requested abort"
+                report.success = False
+                report.add_message(f"Transaction {transaction_id} not found")
+                return report
+
+            if tx.status != TransactionStatus.ACTIVE:
+                report.success = False
+                report.add_message(
+                    f"Transaction {transaction_id} is not active (status: {tx.status.value})"
                 )
-                self.tx_manager.abort_transaction(transaction_id)
-                resources_cleaned.append(f"Transaction {transaction_id} aborted")
-            
-            # release the locks
-            if self.verbose:
-                print(f"\nMelepaskan locks/resources...")
-                
+                return report
+
+            # Perform rollback if aborting
+            if not is_commit and self.undo_log_manager:
+                rolled_back = self.undo_log_manager.rollback_transaction(transaction_id)
+                if rolled_back:  # Check if list is not None/empty
+                    report.add_message(
+                        f"Rolled back {len(rolled_back)} operations for TX {transaction_id}"
+                    )
+                else:
+                    report.add_message(
+                        f"No operations to rollback for TX {transaction_id}"
+                    )
+
+            # Clean up undo logs after commit or abort
+            if self.undo_log_manager:
+                self.undo_log_manager.clear_transaction(transaction_id)
+
+            # Release locks
             self.strategy.end_transaction(transaction_id)
-            resources_cleaned.append(f"Strategy cleanup (locks released) for TX {transaction_id}")
-                
-            # terminate the transaction
+            report.add_message(f"Released locks for TX {transaction_id}")
+
+            # Update transaction status
+            if is_commit:
+                self.tx_manager.commit_transaction(transaction_id)
+                report.add_message(
+                    f"Transaction {transaction_id} committed successfully"
+                )
+            else:
+                self.tx_manager.abort_transaction(transaction_id)
+                report.add_message(f"Transaction {transaction_id} aborted")
+
+            # Mark as terminated
             self.tx_manager.terminate_transaction(transaction_id)
-            resources_cleaned.append(f"Transaction {transaction_id} terminated")
-            
-            if self.verbose:
-                print(f"Locks/resources released: {locks_released}")
-                print(f"\nTX {transaction_id} berhasil diakhiri")
-                print(f"{'='*60}\n")
-            
+            report.success = True
+
         except Exception as e:
-            result = EndTransactionResult.RESOURCE_CLEANUP_FAILED
-            validation_errors.append(f"Error: {str(e)}")
-            
-            if self.verbose:
-                print(f"\nCRITICAL ERROR: {e}")
-                print(f"Performing emergency cleanup...")
-            
-            tx = self.tx_manager.get_transaction(transaction_id)
-            current_status = tx.status if tx else None
-            
-            try:
-                self.strategy.end_transaction(transaction_id)
-                if self.verbose:
-                    print(f"Emergency: locks released")
-            except Exception as cleanup_error:
-                if self.verbose:
-                    print(f"Emergency lock release failed: {cleanup_error}")
-            
-            # terminate transaction if needed
-            if current_status and current_status != TransactionStatus.TERMINATED:
-                try:
-                    # ensure transaction is in terminatable state
-                    if current_status not in [TransactionStatus.COMMITTED, TransactionStatus.ABORTED]:
-                        self.tx_manager.fail_transaction(transaction_id, "Emergency cleanup")
-                        self.tx_manager.abort_transaction(transaction_id)
-                    
-                    self.tx_manager.terminate_transaction(transaction_id)
-                    if self.verbose:
-                        print(f"Emergency: transaction terminated")
-                except Exception as term_error:
-                    if self.verbose:
-                        print(f"Emergency termination failed: {term_error}")
-            elif self.verbose:
-                print(f"Emergency: transaction already terminated")
-            
-            if self.verbose:
-                print(f"Emergency cleanup completed")
-            
-            raise
-        
-        # Hitung execution time
-        end_time = datetime.now()
-        execution_time_ms = (end_time - start_time).total_seconds() * 1000
-        
-        # Buat report
-        report = EndTransactionReport(
-            transaction_id=transaction_id,
-            result=result,
-            timestamp=end_time,
-            locks_released=locks_released,
-            resources_cleaned=resources_cleaned,
-            validation_errors=validation_errors,
-            execution_time_ms=execution_time_ms
-        )
-        
-        self.end_transaction_history.append(report)
+            report.success = False
+            report.add_message(f"Error during end transaction: {str(e)}")
+            import traceback
+
+            traceback.print_exc()
+
         return report
-    
+
     def _validation_needed_for_strategy(self) -> bool:
         strategy_name = self.strategy.__class__.__name__
-        return (strategy_name == 'ValidationBasedStrategy')
-    
+        return strategy_name == "ValidationBasedStrategy"
+
     def _perform_final_validation(self, transaction_id: int) -> Dict[str, Any]:
         errors = []
         valid = True
-        
+
         tx = self.tx_manager.get_transaction(transaction_id)
         if not tx:
-            return {'valid': False, 'errors': ['Transaction not found']}
-        
+            return {"valid": False, "errors": ["Transaction not found"]}
+
         # Cek konflik dengan transaksi lain yang sudah commit
         for other_tx_id in self.tx_manager.committed_transactions:
             if other_tx_id == transaction_id:
                 continue
-            
+
             other_tx = self.tx_manager.get_transaction(other_tx_id)
             if not other_tx:
                 continue
-            
+
             # Cek write-read conflict
             write_read_conflict = tx.write_set.intersection(other_tx.read_set)
             if write_read_conflict:
@@ -245,7 +123,7 @@ class EndTransactionManager:
                     f"pada objek: {write_read_conflict}"
                 )
                 valid = False
-            
+
             # Cek write-write conflict
             write_write_conflict = tx.write_set.intersection(other_tx.write_set)
             if write_write_conflict:
@@ -254,56 +132,15 @@ class EndTransactionManager:
                     f"pada objek: {write_write_conflict}"
                 )
                 valid = False
-        
-        return {'valid': valid, 'errors': errors}
-    
-    def _release_resources_list(
-        self, 
-        transaction_id: int, 
-        accessed_objects: set
-    ) -> List[str]:
-        released = []
-        
-        for obj_id in accessed_objects:
-            released.append(f"Resource: {obj_id}")
-        
-        return released
-    
-    def get_transaction_report(self, transaction_id: int) -> Optional[EndTransactionReport]:
-        for report in reversed(self.end_transaction_history):
-            if report.transaction_id == transaction_id:
-                return report
-        return None
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        total = len(self.end_transaction_history)
-        successful = sum(1 for r in self.end_transaction_history 
-                        if r.result == EndTransactionResult.SUCCESS)
-        failed = sum(1 for r in self.end_transaction_history 
-                    if r.result == EndTransactionResult.FAILED)
-        validation_failed = sum(1 for r in self.end_transaction_history 
-                               if r.result == EndTransactionResult.VALIDATION_FAILED)
-        
-        avg_time = (sum(r.execution_time_ms for r in self.end_transaction_history) / total 
-                   if total > 0 else 0)
-        
-        return {
-            'total_ended': total,
-            'successful': successful,
-            'failed': failed,
-            'validation_failed': validation_failed,
-            'avg_execution_time_ms': avg_time,
-            'success_rate': (successful / total * 100) if total > 0 else 0
-        }
-    
-    def print_statistics(self):
-        stats = self.get_statistics()
-        print("\n" + "="*60)
-        print("END TRANSACTION STATISTICS")
-        print("="*60)
-        print(f"Total Transactions Ended: {stats['total_ended']}")
-        print(f"Successful: {stats['successful']} ({stats['success_rate']:.1f}%)")
-        print(f"Failed: {stats['failed']}")
-        print(f"Validation Failed: {stats['validation_failed']}")
-        print(f"Average Execution Time: {stats['avg_execution_time_ms']:.2f} ms")
-        print("="*60 + "\n")
+
+        return {"valid": valid, "errors": errors}
+
+    def _perform_validation(self, transaction_id: int) -> Dict[str, Any]:
+        """Perform validation if strategy requires it."""
+        # Check if strategy has validation method
+        if hasattr(self.strategy, "validate_for_commit"):
+            is_valid, errors = self.strategy.validate_for_commit(transaction_id)
+            return {"valid": is_valid, "errors": errors}
+
+        # Default validation - check conflicts with committed transactions
+        return self._perform_final_validation(transaction_id)

@@ -1,26 +1,42 @@
 from enum import Enum
-from dataclasses import dataclass, field
-from typing import Any, Union
+from dataclasses import dataclass
+from typing import Any, Union, Optional
 
-# tipe aksi yang bisa terjadi
+# ===== NEW: WAL Structure sesuai Guidebook =====
+class WalType(Enum):
+    """Type of WAL entry"""
+    EXECUTION = "execution"
+    CHECKPOINT = "checkpoint"
+
+class WalAction(Enum):
+    """Action untuk execution entries"""
+    START = "start"
+    INSERT = "insert"
+    UPDATE = "update"
+    DELETE = "delete"
+    COMMIT = "commit"
+    ABORT = "abort"
+
+# ===== LEGACY: Keep untuk backward compatibility =====
 class ActionType(Enum):
+    """Legacy enum - untuk code yang sudah ada"""
     START = 0
     WRITE = 1
     COMMIT = 2
     ABORT = 3
-# mock  dari data yang dikirim oelh query processor
+
+# ===== Data Classes =====
 @dataclass
 class MockExecutionResult:
+    """Mock dari data yang dikirim oleh query processor"""
     transaction_id: int
     query: str
-    # data bisa berisi apa aj, tapi utk write kita asumsikan datanya baru
-    data: Any 
+    data: Any
 
-# moxk dari laporan perubahan yang dikasi oleh orang 2 (buffer manager) stlh dia memproces data
 @dataclass
 class MockChangeReport:
+    """Mock dari laporan perubahan yang dikasi oleh Buffer Manager"""
     table_name: str
-    pk_value: dict[str, Any] = None
-    old_data: Union[dict, None] = None # data lama (utk update/delelte)
-    new_data: Union[dict, None] = None # data baru (utk update/insert)
-
+    pk_value: Optional[dict[str, Any]] = None
+    old_data: Union[dict, None] = None  # None = INSERT
+    new_data: Union[dict, None] = None  # None = DELETE

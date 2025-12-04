@@ -1,15 +1,17 @@
 from typing import Any
 import threading
-from .lib.strategy_interface import ConcurrencyStrategy, Response
-from .lib.lock_based_strategy import LockBasedStrategy
-from .lib.timestamp_based_strategy import TimestampBasedStrategy
-from .lib.validation_based_strategy import ValidationBasedStrategy
-from .lib.multi_version_strategy import MultiVersionStrategy
-from .lib.transaction_model import TransactionManager
-from .lib.transaction_coordinator import TransactionCoordinator
-from .lib.deadlock_detector import DeadlockDetector
-from .lib.transaction_id_generator import TransactionIdGenerator
-from .lib.undo_log import UndoLogManager
+from Concurrency_Control_Manager.lib.strategy_interface import ConcurrencyStrategy, Response
+from Concurrency_Control_Manager.lib.lock_based_strategy import LockBasedStrategy
+from Concurrency_Control_Manager.lib.timestamp_based_strategy import TimestampBasedStrategy
+from Concurrency_Control_Manager.lib.validation_based_strategy import ValidationBasedStrategy
+from Concurrency_Control_Manager.lib.multi_version_strategy import MultiVersionStrategy
+from Concurrency_Control_Manager.lib.transaction_model import TransactionManager
+from Concurrency_Control_Manager.lib.transaction_coordinator import TransactionCoordinator
+from Concurrency_Control_Manager.lib.deadlock_detector import DeadlockDetector
+from Concurrency_Control_Manager.lib.transaction_id_generator import TransactionIdGenerator
+from Concurrency_Control_Manager.lib.undo_log import UndoLogManager
+from Concurrency_Control_Manager.lib.failure_recovery_adapter import FailureRecoveryAdapter
+from Concurrency_Control_Manager.lib.mock_storage import MockStorageManager
 
 
 class ConcurrencyControlManager:
@@ -29,10 +31,13 @@ class ConcurrencyControlManager:
             return
 
         self.tx_manager = TransactionManager()
-        self.undo_log_manager = UndoLogManager()
+        # Use FailureRecoveryAdapter instead of UndoLogManager for integration
+        self.undo_log_manager = FailureRecoveryAdapter(log_directory="logs")
+        self.storage_manager = None  # Will be set via set_storage_manager()
         self.strategy: ConcurrencyStrategy = LockBasedStrategy()
         self.id_generator = TransactionIdGenerator()
-        self.coordinator = TransactionCoordinator(self.tx_manager, self.strategy)
+        self.coordinator = TransactionCoordinator(
+            self.tx_manager, self.strategy)
         self.deadlock_detector = DeadlockDetector(self.tx_manager)
 
         # Set undo log manager in end transaction manager
@@ -40,78 +45,70 @@ class ConcurrencyControlManager:
 
         # Connect deadlock detector to coordinator
         self.coordinator.set_deadlock_detector(self.deadlock_detector)
-        self.frm = None
+        self.frm = None  # Will be set via set_failure_recovery_manager()
         self._initialized = True
-        print(
-            f"[CCM] Manajer diinisialisasi (Singleton), strategi aktif: {self.strategy.__class__.__name__}"
-        )
-        print(
-            f"[CCM] ACID Properties: [OK] Atomicity (Undo Log), [OK] Consistency, [OK] Isolation, [OK] Durability"
-        )
-        print(
-            f"[CCM] Deadlock Prevention: {getattr(self.strategy, 'deadlock_prevention_scheme', 'N/A')}"
-        )
-    
+
     def set_failure_recovery_manager(self, frm):
-        # self.frm = frm
-        print(f"[CCM] Failure Recovery Manager connected")
+        """Connect FRM for transaction lifecycle logging and recovery"""
+        self.frm = frm
+        # Also connect to undo log adapter if needed
+        if hasattr(self.undo_log_manager, 'set_frm'):
+            self.undo_log_manager.set_frm(frm)
+        print("[CCM] Failure Recovery Manager connected")
+
+    def set_storage_manager(self, storage_manager):
+        """Set real storage manager for data operations and rollback"""
+        self.storage_manager = storage_manager
+        self.undo_log_manager.set_storage_manager(storage_manager)
+        print("[CCM] Storage Manager connected")
 
     def begin_transaction(self) -> int:
-        print("[CCM] Beginning new transaction...")
-        tid = self.id_generator.generate()
-        self.tx_manager.create_transaction(tid)
-        # if self.frm:
-        #     self.frm.log_start(tid)
-        return tid
+        tx_id = self.id_generator.generate()
+        self.tx_manager.create_transaction(tx_id)
+        self.undo_log_manager.log_start(tx_id)
+
+        # Notify FRM about transaction start (callback pattern)
+        if self.frm:
+            self.frm.notify_transaction_start(tx_id)
+            # Also log START to WAL
+            from Failure_Recovery.log_config import WalAction
+            self.frm.write_log_entry(tx_id, WalAction.START)
+
+        return tx_id
 
     def log_object(self, obj: Any, transaction_id: int, action: str):
         self.coordinator.execute_operation(obj, transaction_id, action)
 
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
-        print(
-            f"[CCM] Mendelegasikan VALIDATE '{action}' ke {self.strategy.__class__.__name__}"
-        )
         return self.coordinator.validate_operation(obj, transaction_id, action)
 
     def end_transaction(self, transaction_id: int):
-        print(
-            f"[CCM] end_transaction() deprecated. Gunakan commit_transaction() atau abort_transaction()"
-        )
-        print(f"[CCM] Auto-committing TX {transaction_id}...")
+        # Deprecated: use commit_transaction() or abort_transaction()
         self.commit_transaction(transaction_id)
 
     def commit_transaction(self, transaction_id: int):
-        print(f"[CCM] Committing TX {transaction_id}...")
-        try:
-            self.coordinator.commit(transaction_id)
-            # if self.frm:
-            #     self.frm.log_commit(transaction_id)
-            print(f"[CCM] [OK] TX {transaction_id} berhasil di-commit dan terminated")
-        except Exception as e:
-            print(f"[CCM] [ERROR] Error saat commit TX {transaction_id}: {e}")
-            raise
+        self.coordinator.commit(transaction_id)
+        self.undo_log_manager.log_commit(transaction_id)
+
+        # Notify FRM about commit (callback pattern)
+        if self.frm:
+            # Log COMMIT to WAL
+            from Failure_Recovery.log_config import WalAction
+            self.frm.write_log_entry(transaction_id, WalAction.COMMIT)
+            # Remove from active transactions
+            self.frm.notify_transaction_end(transaction_id)
 
     def abort_transaction(self, transaction_id: int, reason: str = "User requested"):
-        print(f"[CCM] Aborting TX {transaction_id} (Reason: {reason})...")
-        try:
-            self.coordinator.abort(transaction_id, reason)
-            # if self.frm:
-            #     self.frm.log_abort(transaction_id)
-            print(f"[CCM] [ABORTED] TX {transaction_id} berhasil di-abort dan terminated")
-        except Exception as e:
-            print(f"[CCM] Error saat abort TX {transaction_id}: {e}")
-            raise
+        self.coordinator.abort(transaction_id, reason)
+
+        # Trigger FRM rollback (abort_transaction does undo)
+        if self.frm:
+            self.frm.abort_transaction(transaction_id)
+            # Remove from active transactions
+            self.frm.notify_transaction_end(transaction_id)
 
     def check_deadlock(self) -> bool:
-        print("[CCM] Checking for deadlocks...")
-        detected = self.deadlock_detector.check_and_resolve(self.abort_transaction)
-
-        if detected:
-            print(f"[CCM] [WARNING] DEADLOCK DETECTED and resolved")
-        else:
-            print("[CCM] [OK] No deadlock detected")
-
-        return detected
+        return self.deadlock_detector.check_and_resolve(self.abort_transaction)
 
     def get_transaction_status(self, transaction_id: int) -> str:
         tx = self.tx_manager.get_transaction(transaction_id)
@@ -135,19 +132,19 @@ class ConcurrencyControlManager:
         }
 
         strategy_class = strategies.get(mechanism.lower())
-        if strategy_class:
-            self.strategy = strategy_class()
-            self.coordinator.strategy = self.strategy
-            self.coordinator.end_tx_manager.strategy = self.strategy
+        if not strategy_class:
+            raise ValueError(f"Unknown concurrency mechanism: '{mechanism}'")
 
-            # Reconnect tx_manager and deadlock callback to new strategy
-            if hasattr(self.strategy, 'set_transaction_manager'):
-                self.strategy.set_transaction_manager(self.tx_manager)
-            if hasattr(self.strategy, 'set_deadlock_callback'):
-                self.strategy.set_deadlock_callback(self.coordinator._on_potential_deadlock)
+        self.strategy = strategy_class()
+        self.coordinator.strategy = self.strategy
+        self.coordinator.end_tx_manager.strategy = self.strategy
 
-            print(f"[CCM] Mekanisme diubah ke: {self.strategy.__class__.__name__}")
-            if hasattr(self.strategy, 'deadlock_prevention_scheme'):
-                print(f"[CCM] Deadlock Prevention: {self.strategy.deadlock_prevention_scheme}")
-        else:
-            print(f"[CCM] Error: Algoritma '{mechanism}' tidak dikenal.")
+        # Reconnect tx_manager and deadlock callback to new strategy
+        if hasattr(self.strategy, "set_transaction_manager"):
+            self.strategy.set_transaction_manager(self.tx_manager)
+        if hasattr(self.strategy, "set_deadlock_callback"):
+            self.strategy.set_deadlock_callback(
+                self.coordinator._on_potential_deadlock)
+        # NEW: Reconnect abort callback for wound-wait
+        if hasattr(self.strategy, "set_abort_callback"):
+            self.strategy.set_abort_callback(self.coordinator._auto_abort)

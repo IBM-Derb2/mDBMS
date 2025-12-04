@@ -1,42 +1,25 @@
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
-from datetime import datetime
+from .undo_log import UndoLogEntry
+from log_config import ActionType, MockChangeReport  # type: ignore
+from log_writer import LogWriter  # type: ignore
+import sys
+import os
+from typing import Any, List, Dict
+
+failure_recovery_path = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "Failure_Recovery")
+)
+sys.path.append(failure_recovery_path)
 
 
-@dataclass
-class UndoLogEntry:
-    """Single entry in the undo log."""
+class FailureRecoveryAdapter:
+    """Bridges Concurrency Control Manager with Failure Recovery logging system."""
 
-    transaction_id: int
-    operation_type: str  # "read" or "write" - same as Operation.operation_type
-    object_id: str
-    old_value: Any  # Previous value before operation
-    new_value: Any  # New value after operation
-    timestamp: datetime = field(default_factory=datetime.now)
-
-    def __repr__(self):
-        return (
-            f"UndoLog(TX={self.transaction_id}, op={self.operation_type}, "
-            f"obj={self.object_id}, old={self.old_value}, new={self.new_value})"
-        )
-
-
-class UndoLogManager:
-    """
-    Manages undo logs for transaction rollback.
-
-    This component:
-    - Records all write operations with their before/after values
-    - Provides rollback capability by reversing operations
-    - Maintains logs per transaction
-    - Cleans up logs after commit/abort completion
-    """
-
-    def __init__(self):
+    def __init__(self, log_directory: str = "logs"):
+        self.log_writer = LogWriter(log_directory=log_directory)
         self.undo_logs: Dict[int, List[UndoLogEntry]] = {}
         self.total_logged_operations = 0
         self.total_rollbacks = 0
-        self.storage_manager = None  # Will be set by CCM if needed
+        self.storage_manager = None
 
     def set_storage_manager(self, storage_manager):
         """Set storage manager reference for actual rollback operations."""
@@ -50,39 +33,43 @@ class UndoLogManager:
         old_value: Any,
         new_value: Any,
     ):
-        """Log a write operation for potential rollback."""
+        """Log write operation to both in-memory and Failure Recovery disk."""
         if transaction_id not in self.undo_logs:
             self.undo_logs[transaction_id] = []
 
-        entry = UndoLogEntry(
+        undo_entry = UndoLogEntry(
             transaction_id=transaction_id,
             operation_type=operation_type,
             object_id=object_id,
             old_value=old_value,
             new_value=new_value,
         )
-
-        self.undo_logs[transaction_id].append(entry)
+        self.undo_logs[transaction_id].append(undo_entry)
         self.total_logged_operations += 1
 
+        # Write to Failure Recovery log file
+        # Note: LogWriter.log_operation requires table, pk, old_data, new_data
+        # For now we skip detailed WAL logging since we need proper table/pk info
+
     def rollback_transaction(self, transaction_id: int) -> List[UndoLogEntry]:
-        """Rollback all operations for a transaction. Returns list of rolled back entries."""
+        """Rollback all operations for a transaction."""
         if transaction_id not in self.undo_logs:
             return []
 
-        logs = list(reversed(self.undo_logs[transaction_id]))
+        operations_to_undo = list(reversed(self.undo_logs[transaction_id]))
 
-        for entry in logs:
-            self._undo_operation(entry)
+        for operation in operations_to_undo:
+            self._undo_operation(operation)
+
+        # Log ABORT to Failure Recovery
+        from log_config import WalAction
+        self.log_writer.log_lifecycle(transaction_id, WalAction.ABORT)
 
         self.total_rollbacks += 1
-        return logs
+        return operations_to_undo
 
     def _undo_operation(self, entry: UndoLogEntry):
         """Undo a single operation by restoring old value to storage."""
-        print(f"[UndoLog] Rolling back: {entry}")
-
-        # If storage manager is available, write old value back
         if self.storage_manager:
             self.storage_manager.write_block(
                 object_id=entry.object_id,
@@ -90,13 +77,21 @@ class UndoLogManager:
                 operation_type=entry.operation_type,
                 transaction_id=entry.transaction_id,
             )
-        else:
-            print(f"[UndoLog] WARNING: No storage manager set, rollback simulated only")
 
     def clear_transaction(self, transaction_id: int):
-        """Clear undo logs for a transaction (called after commit or abort completion)."""
+        """Clear undo logs for a transaction after commit or abort."""
         if transaction_id in self.undo_logs:
             del self.undo_logs[transaction_id]
+
+    def log_start(self, transaction_id: int):
+        """Log START to Failure Recovery system."""
+        from log_config import WalAction
+        self.log_writer.log_lifecycle(transaction_id, WalAction.START)
+
+    def log_commit(self, transaction_id: int):
+        """Log COMMIT to Failure Recovery system."""
+        from log_config import WalAction
+        self.log_writer.log_lifecycle(transaction_id, WalAction.COMMIT)
 
     def get_transaction_logs(self, transaction_id: int) -> List[UndoLogEntry]:
         """Get all undo log entries for a transaction."""
@@ -105,7 +100,8 @@ class UndoLogManager:
     def has_logs(self, transaction_id: int) -> bool:
         """Check if transaction has any undo logs."""
         return (
-            transaction_id in self.undo_logs and len(self.undo_logs[transaction_id]) > 0
+            transaction_id in self.undo_logs and len(
+                self.undo_logs[transaction_id]) > 0
         )
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -124,7 +120,7 @@ class UndoLogManager:
         """Print undo log statistics."""
         stats = self.get_statistics()
         print("\n" + "=" * 60)
-        print("UNDO LOG STATISTICS")
+        print("FAILURE RECOVERY ADAPTER STATISTICS")
         print("=" * 60)
         print(f"Total Logged Operations: {stats['total_logged_operations']}")
         print(f"Total Rollbacks Performed: {stats['total_rollbacks']}")
@@ -138,7 +134,7 @@ class UndoLogManager:
         """Print all undo logs for a specific transaction."""
         logs = self.get_transaction_logs(transaction_id)
 
-        print(f"\n[UndoLog] Transaction {transaction_id} Logs:")
+        print(f"\n[FRAdapter] Transaction {transaction_id} Logs:")
         print("-" * 60)
 
         if not logs:
@@ -146,7 +142,7 @@ class UndoLogManager:
         else:
             for i, entry in enumerate(logs, 1):
                 print(
-                    f"  {i}. {entry.operation_type.value.upper()}: "
+                    f"  {i}. {entry.operation_type}: "
                     f"'{entry.object_id}' | "
                     f"old={entry.old_value} -> new={entry.new_value}"
                 )
@@ -156,3 +152,26 @@ class UndoLogManager:
     def clear_all(self):
         """Clear all undo logs (use with caution!)."""
         self.undo_logs.clear()
+
+    def _parse_object_id(self, object_id: str):
+        """Parse object_id to extract table_name and primary_key.
+
+        Format: "table_name:pk_field=pk_value" or "object_id"
+        Examples: "products:id=1" -> ("products", {"id": 1})
+        """
+        try:
+            if ":" in object_id:
+                table_name, key_part = object_id.split(":", 1)
+                if "=" in key_part:
+                    key_field, key_value = key_part.split("=", 1)
+                    try:
+                        key_value = int(key_value)
+                    except ValueError:
+                        pass
+                    return table_name, {key_field: key_value}
+                else:
+                    return table_name, {"id": key_part}
+            else:
+                return "data", {"id": object_id}
+        except Exception:
+            return "data", {"id": object_id}
