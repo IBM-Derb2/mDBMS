@@ -5,16 +5,12 @@ Integrates with Storage Manager to get real table statistics for cost-based quer
 Falls back to mock statistics if storage manager is not available.
 """
 
+import logging
 from typing import Dict, Optional
 from globalsy.constants.query_operators import QueryOperators
 
-# Try to import Storage Manager
-try:
-    from Storage_Manager.storage_engine import StorageEngine
-    from Storage_Manager.utils import Statistic
-    STORAGE_AVAILABLE = True
-except ImportError:
-    STORAGE_AVAILABLE = False
+logger = logging.getLogger(__name__)
+
 
 
 class TableStatistics:
@@ -58,18 +54,12 @@ class TableStatistics:
 class StatisticsManager:
     """Manages database statistics for cost estimation"""
 
-    def __init__(self, use_storage_manager=True):
+    def __init__(self, storage_engine=None):
         self.tables: Dict[str, TableStatistics] = {}
-        self.storage_engine = None
+        self.storage_engine = storage_engine
 
-        # Try to use real storage manager first
-        if use_storage_manager and STORAGE_AVAILABLE:
-            try:
-                self.storage_engine = StorageEngine()
-                self._load_stats_from_storage()
-            except Exception as e:
-                print(f"Warning: Could not load storage manager: {e}")
-                self._initialize_default_stats()
+        if self.storage_engine:
+            self._load_stats_from_storage()
         else:
             self._initialize_default_stats()
 
@@ -78,39 +68,31 @@ class StatisticsManager:
         if not self.storage_engine:
             return
 
-        # Try to load stats for common tables
-        table_names = ['users', 'orders', 'products', 'categories']
+        table_names = ['users', 'orders', 'products', 'categories', 'student', 'attends', 'course']
 
         for table_name in table_names:
-            try:
-                storage_stats = self.storage_engine.get_stats(table_name)
+            storage_stats = self.storage_engine.get_stats(table_name)
+            if not storage_stats:
+                continue
 
-                # Convert Storage Manager statistics to our format
-                table_stats = TableStatistics(
-                    name=table_name,
-                    row_count=storage_stats.n_r,
-                    avg_row_size=storage_stats.l_r
+            table_stats = TableStatistics(
+                name=table_name,
+                row_count=storage_stats.n_r,
+                avg_row_size=storage_stats.l_r
+            )
+
+            for col_name, distinct_count in storage_stats.V_a_r.items():
+                table_stats.add_column_stats(
+                    column=col_name,
+                    distinct_values=distinct_count,
+                    null_count=0
                 )
 
-                # Add column statistics from V_a_r
-                for col_name, distinct_count in storage_stats.V_a_r.items():
-                    table_stats.add_column_stats(
-                        column=col_name,
-                        distinct_values=distinct_count,
-                        null_count=0  # Storage Manager doesn't track nulls yet
-                    )
+            self.tables[table_name] = table_stats
+            logger.debug(f"Loaded stats for '{table_name}': {storage_stats.n_r:,} rows")
 
-                self.tables[table_name] = table_stats
-                print(
-                    f"✓ Loaded stats for '{table_name}': {storage_stats.n_r:,} rows")
-
-            except Exception as e:
-                # Table doesn't exist or error loading stats
-                pass
-
-        # If no tables loaded, use default stats
         if not self.tables:
-            print("No tables found in storage, using default mock statistics")
+            logger.debug("No tables found in storage, using default mock statistics")
             self._initialize_default_stats()
 
     def _initialize_default_stats(self):
@@ -291,37 +273,137 @@ class StatisticsManager:
         """
         return 1.0 - selectivity
 
+    def calculate_cost(self, node, estimated_rows: int = None) -> tuple[int, int]:
+        from globalsy.classes.query_tree import QueryTree
+        from globalsy.constants.query_types import QueryTypes
+
+        if node.type == QueryTypes.PROJECTION:
+            return self._calculate_projection_cost(node, estimated_rows)
+        elif node.type == QueryTypes.SELECTION_STMT:
+            return self._calculate_selection_cost(node)
+        elif node.type == QueryTypes.THETA_JOIN:
+            return self._calculate_join_cost(node)
+        elif node.type == QueryTypes.CROSS_JOIN:
+            return self._calculate_cross_join_cost(node)
+        elif node.type == QueryTypes.NATURAL_JOIN:
+            return self._calculate_natural_join_cost(node)
+        elif node.type == QueryTypes.RELATION:
+            return self._calculate_relation_cost(node)
+        elif node.type == QueryTypes.ALIAS:
+            if node.childs:
+                return self.calculate_cost(node.childs[0], estimated_rows)
+            return 0, 0
+        elif node.type == QueryTypes.ORDER_BY:
+            if node.childs:
+                cost, rows = self.calculate_cost(node.childs[0], estimated_rows)
+                return cost + (rows * 10), rows
+            return 0, 0
+        elif node.type == QueryTypes.LIMIT:
+            if node.childs:
+                cost, rows = self.calculate_cost(node.childs[0], estimated_rows)
+                limit = int(node.val) if node.val else rows
+                return cost, min(rows, limit)
+            return 0, 0
+        else:
+            total_cost = 0
+            total_rows = estimated_rows if estimated_rows else 1000
+            for child in node.childs:
+                child_cost, child_rows = self.calculate_cost(child, estimated_rows)
+                total_cost += child_cost
+                if child_rows:
+                    total_rows = child_rows
+            return total_cost, total_rows
+
+    def _calculate_projection_cost(self, node, estimated_rows):
+        if not node.childs:
+            return 0, 0
+        cost, rows = self.calculate_cost(node.childs[0], estimated_rows)
+        return cost + (rows * 2), rows
+
+    def _calculate_selection_cost(self, node):
+        if len(node.childs) < 2:
+            if node.childs:
+                return self.calculate_cost(node.childs[0])
+            return 0, 0
+
+        source_cost, source_rows = self.calculate_cost(node.childs[0])
+        condition = node.childs[1]
+
+        from globalsy.constants.query_types import QueryTypes
+        selectivity = 0.5
+        if condition.type == QueryTypes.OPERATOR:
+            selectivity = self._estimate_selectivity_from_condition(condition)
+
+        result_rows = int(source_rows * selectivity)
+        filter_cost = source_rows * 3
+        return source_cost + filter_cost, result_rows
+
+    def _calculate_relation_cost(self, node):
+        table_name = node.val
+        row_count = self.get_row_count(table_name)
+        return row_count * 5, row_count
+
+    def _calculate_join_cost(self, node):
+        if len(node.childs) < 2:
+            return 0, 0
+
+        left_cost, left_rows = self.calculate_cost(node.childs[0])
+        right_cost, right_rows = self.calculate_cost(node.childs[1])
+
+        result_rows = max(left_rows, right_rows)
+        if len(node.childs) >= 3:
+            result_rows = int(result_rows * 0.8)
+
+        smaller_rows = min(left_rows, right_rows)
+        larger_rows = max(left_rows, right_rows)
+        join_cost = smaller_rows * 5 + larger_rows * 3 + result_rows * 2
+
+        return left_cost + right_cost + join_cost, result_rows
+
+    def _calculate_cross_join_cost(self, node):
+        if len(node.childs) < 2:
+            return 0, 0
+
+        left_cost, left_rows = self.calculate_cost(node.childs[0])
+        right_cost, right_rows = self.calculate_cost(node.childs[1])
+
+        result_rows = left_rows * right_rows
+        join_cost = result_rows * 10
+
+        return left_cost + right_cost + join_cost, result_rows
+
+    def _calculate_natural_join_cost(self, node):
+        return self._calculate_join_cost(node)
+
+    def _estimate_selectivity_from_condition(self, condition):
+        from globalsy.constants.query_operators import QueryOperators
+
+        if condition.val == QueryOperators.AND:
+            selectivities = [self._estimate_selectivity_from_condition(child) for child in condition.childs]
+            return self.estimate_conjunction_selectivity(selectivities)
+        elif condition.val == QueryOperators.OR:
+            selectivities = [self._estimate_selectivity_from_condition(child) for child in condition.childs]
+            return self.estimate_disjunction_selectivity(selectivities)
+        elif condition.val in [QueryOperators.EQ, QueryOperators.NEQ, QueryOperators.LT, QueryOperators.LTE, QueryOperators.GT, QueryOperators.GTE]:
+            if condition.val == QueryOperators.EQ:
+                return 0.1
+            elif condition.val in [QueryOperators.LT, QueryOperators.GT, QueryOperators.LTE, QueryOperators.GTE]:
+                return 0.33
+            elif condition.val == QueryOperators.NEQ:
+                return 0.9
+        return 0.5
+
     def print_all_statistics(self):
-        """Print all database statistics"""
-        print("="*80)
-        print("DATABASE STATISTICS")
-        print("="*80)
-        print(f"\nTotal Tables: {len(self.tables)}")
-        print(
-            f"Total Rows: {sum(t.row_count for t in self.tables.values()):,}")
-        print()
+        logger.info("="*80)
+        logger.info("DATABASE STATISTICS")
+        logger.info("="*80)
+        logger.info(f"\nTotal Tables: {len(self.tables)}")
+        logger.info(f"Total Rows: {sum(t.row_count for t in self.tables.values()):,}")
+        logger.info("")
 
         for table_name in sorted(self.tables.keys()):
             table = self.tables[table_name]
-            print(table)
-            print()
+            logger.info(str(table))
+            logger.info("")
 
-        print("="*80)
-
-
-# Global statistics manager instance
-_stats_manager = None
-
-
-def get_statistics_manager() -> StatisticsManager:
-    """Get the global statistics manager instance"""
-    global _stats_manager
-    if _stats_manager is None:
-        _stats_manager = StatisticsManager()
-    return _stats_manager
-
-
-def print_statistics():
-    """Convenience function to print all statistics"""
-    mgr = get_statistics_manager()
-    mgr.print_all_statistics()
+        logger.info("="*80)

@@ -4,38 +4,44 @@ import logging
 from typing import Optional, Union
 
 from .query_types import ParsedQuery
-from .lib.parse_query import internal_parse_query
-from .lib.get_cost import internal_get_cost
+from .lib.helpers.tokenizer import SQLTokenizer
+from .lib.parsers.sql_parser import SQLParser
+from .lib.optimization.optimizer import QueryOptimizer
+from .lib.optimization.tree_utils import TreeManipulator
+from .lib.cost.statistics import StatisticsManager
 
 
 class OptimizationEngine:
-    def __init__(self, logger: Optional[logging.Logger] = None):
-        """Create an OptimizationEngine.
-
-        logger: optional logging.Logger instance. If provided, engine will
-        write debug/info/error messages to it.
-        """
+    def __init__(self, storage_engine=None, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger(__name__)
+        self.storage_engine = storage_engine
+        self.statistics_manager = StatisticsManager(storage_engine=storage_engine)
+        self.optimizer = QueryOptimizer(logger=self.logger)
 
     def _log(self, level: str, message: str):
-        """Internal logging helper method"""
         if self.logger:
             log_method = getattr(self.logger, level.lower(), None)
             if log_method:
                 log_method(message)
 
     def parse_query(self, query: str) -> ParsedQuery:
-        """
-        Menerima query dalam bentuk string dan mengubahnya menjadi object yang merepresentasikan query yang telah di-parse.
-        Implementasi internal dari objek parsed query sepenuhnya diserahkan kepada masing - masing kelompok.
-        """
         try:
             self._log('info', f"Parsing query: {query}")
 
-            parsed_query = internal_parse_query(query, logger=self.logger)
+            if not query or not query.strip():
+                raise ValueError("Query string cannot be empty")
 
-            self._log(
-                'info', f"Successfully parsed query type: {parsed_query.query_tree.type}")
+            tokenizer = SQLTokenizer(query, logger=self.logger)
+            tokens = tokenizer.tokenize()
+
+            parser = SQLParser(tokens, logger=self.logger)
+            query_tree = parser.parse()
+
+            TreeManipulator.set_parent_pointers(query_tree)
+
+            parsed_query = ParsedQuery(query_tree=query_tree, query=query)
+
+            self._log('info', f"Successfully parsed query type: {parsed_query.query_tree.type}")
 
             return parsed_query
 
@@ -47,95 +53,41 @@ class OptimizationEngine:
             raise ValueError(f"Failed to parse query: {str(e)}")
 
     def optimize_query(self, parsed_query: ParsedQuery) -> ParsedQuery:
-        """
-        Perform optimization on a parsed query and return an optimized
-        ParsedQuery. This method expects a ParsedQuery instance (the caller
-        is responsible for parsing raw SQL text via `parse_query`).
-
-        The optimization applies equivalence rules including:
-        - Selection decomposition and reordering
-        - Projection elimination
-        - Join order optimization
-        - Selection/projection push-down
-        """
         if not isinstance(parsed_query, ParsedQuery):
             raise TypeError("optimize_query requires a ParsedQuery instance")
 
-        self._log(
-            'info', f"Optimizing parsed query type: {parsed_query.query_tree.type}")
+        self._log('info', f"Optimizing parsed query type: {parsed_query.query_tree.type}")
 
-        # Import and use the internal optimizer
-        from .lib.optimize_query import internal_optimize_query
-
-        # Apply optimization
-        optimized_query = internal_optimize_query(parsed_query, self.logger)
+        optimized_query = self.optimizer.optimize(parsed_query)
 
         self._log('info', "Optimization completed")
 
         return optimized_query
 
     def get_cost(self, query: Union[str, ParsedQuery]) -> int:
-        """
-        Menghitung biaya eksekusi dari query yang diberikan,
-        dan adalah method pendukung untuk method optimize_query.
-
-        Uses statistics-based cost calculation automatically when available
-        for more accurate cost estimates.
-
-        Args:
-            query: Either a SQL query string or a ParsedQuery object
-
-        Returns:
-            The total cost of executing the query
-        """
         if isinstance(query, str):
             parsed_query = self.parse_query(query)
         else:
             parsed_query = query
 
-        self._log(
-            'debug', f"Calculating cost for query type: {parsed_query.query_tree.type}")
-        cost = internal_get_cost(parsed_query, self.logger)
-        self._log('debug', f"Total query cost: {cost} (statistics-based)")
+        self._log('debug', f"Calculating cost for query type: {parsed_query.query_tree.type}")
+
+        cost, _ = self.statistics_manager.calculate_cost(parsed_query.query_tree)
+
+        self._log('debug', f"Total query cost: {cost}")
 
         return cost
 
     def get_detailed_cost(self, query: Union[str, ParsedQuery]) -> tuple[int, int]:
-        """
-        Menghitung biaya eksekusi dan estimasi jumlah baris hasil dari query.
-
-        Uses statistics-based cost calculation to provide:
-        - Accurate execution cost estimation
-        - Result cardinality estimation (number of rows)
-
-        Buat ngedebug banggg
-
-        Args:
-            query: Either a SQL query string or a ParsedQuery object
-
-        Returns:
-            Tuple of (total_cost, estimated_rows)
-            - total_cost: The total cost of executing the query
-            - estimated_rows: Estimated number of rows in the result set
-
-        Example:
-            >>> engine = OptimizationEngine()
-            >>> cost, rows = engine.get_detailed_cost("SELECT * FROM users WHERE age > 30")
-            >>> print(f"Cost: {cost}, Expected rows: {rows}")
-        """
         if isinstance(query, str):
             parsed_query = self.parse_query(query)
         else:
             parsed_query = query
 
-        self._log(
-            'debug', f"Calculating detailed cost for query type: {parsed_query.query_tree.type}")
+        self._log('debug', f"Calculating detailed cost for query type: {parsed_query.query_tree.type}")
 
-        from .lib.get_cost import internal_get_detailed_cost
-        cost, estimated_rows = internal_get_detailed_cost(
-            parsed_query, self.logger)
+        cost, estimated_rows = self.statistics_manager.calculate_cost(parsed_query.query_tree)
 
-        self._log(
-            'debug', f"Total query cost: {cost}, Estimated rows: {estimated_rows:,}")
+        self._log('debug', f"Total query cost: {cost}, Estimated rows: {estimated_rows:,}")
 
         return cost, estimated_rows

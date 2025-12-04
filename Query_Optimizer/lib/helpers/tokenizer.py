@@ -268,4 +268,4 @@ class SQLTokenizer:
             qt_value = getattr(QueryTypes, upper_value, upper_value)
             return SQLToken('KEYWORD', qt_value, start_pos)
 
-        return SQLToken('IDENTIFIER', value, start_pos)
+        return SQLToken('IDENTIFIER', value.lower(), start_pos)

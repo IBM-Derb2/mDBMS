@@ -9,8 +9,6 @@ from globalsy.constants.query_operators import QueryOperators
 
 
 class TreeAnalyzer:
-    """Utility class for analyzing query trees"""
-
     @staticmethod
     def find_nodes_by_type(tree: QueryTree, node_type: str) -> List[QueryTree]:
         """
@@ -23,6 +21,7 @@ class TreeAnalyzer:
         Returns:
             List of QueryTree nodes matching the type
         """
+
         result = []
 
         if tree.type == node_type:
@@ -35,15 +34,7 @@ class TreeAnalyzer:
 
     @staticmethod
     def get_depth(tree: QueryTree) -> int:
-        """
-        Calculate the depth of the query tree
 
-        Args:
-            tree: The root of the query tree
-
-        Returns:
-            Maximum depth of the tree
-        """
         if not tree.childs:
             return 1
 
@@ -53,15 +44,7 @@ class TreeAnalyzer:
 
     @staticmethod
     def extract_tables(tree: QueryTree) -> Set[str]:
-        """
-        Extract all table names referenced in the query
 
-        Args:
-            tree: The root of the query tree
-
-        Returns:
-            Set of table names
-        """
         tables = set()
 
         # Look for FROM, JOIN nodes
@@ -76,18 +59,10 @@ class TreeAnalyzer:
 
     @staticmethod
     def extract_columns(tree: QueryTree) -> Set[str]:
-        """
-        Extract all column names referenced in the query
 
-        Args:
-            tree: The root of the query tree
-
-        Returns:
-            Set of column names
-        """
         columns = set()
 
-        # Look for column references
+        # cek referensi kolom
         if tree.type in [QueryTypes.COLUMN, QueryTypes.IDENTIFIER]:
             if tree.val and tree.val != QueryOperators.MULTIPLY:
                 columns.add(tree.val)
@@ -99,16 +74,8 @@ class TreeAnalyzer:
 
     @staticmethod
     def has_subquery(tree: QueryTree) -> bool:
-        """
-        Check if the tree contains subqueries
 
-        Args:
-            tree: The root of the query tree
-
-        Returns:
-            True if subquery exists
-        """
-        # Look for nested SELECT nodes
+        # cek kalo ada nested SELECT
         if tree.type == QueryTypes.SELECT and tree.parent is not None:
             parent = tree.parent
             if parent.type in [QueryTypes.FROM, QueryTypes.WHERE, QueryTypes.JOIN]:
@@ -121,16 +88,16 @@ class TreeManipulator:
     """Utility class for manipulating query trees"""
 
     @staticmethod
+    def set_parent_pointers(tree: QueryTree, parent: Optional[QueryTree] = None) -> QueryTree:
+
+        tree.parent = parent
+        for child in tree.childs:
+            TreeManipulator.set_parent_pointers(child, tree)
+        return tree
+
+    @staticmethod
     def copy_tree(tree: QueryTree) -> QueryTree:
-        """
-        Create a deep copy of a query tree
 
-        Args:
-            tree: The tree to copy
-
-        Returns:
-            A new QueryTree with the same structure
-        """
         new_tree = QueryTree(
             type=tree.type,
             val=tree.val,
@@ -147,17 +114,7 @@ class TreeManipulator:
 
     @staticmethod
     def replace_node(tree: QueryTree, old_node: QueryTree, new_node: QueryTree) -> QueryTree:
-        """
-        Replace a node in the tree with a new node
 
-        Args:
-            tree: The root of the tree
-            old_node: The node to replace
-            new_node: The replacement node
-
-        Returns:
-            The modified tree
-        """
         if tree == old_node:
             new_node.parent = tree.parent
             return new_node
@@ -174,16 +131,7 @@ class TreeManipulator:
 
     @staticmethod
     def insert_node_above(child: QueryTree, new_parent: QueryTree) -> QueryTree:
-        """
-        Insert a new node as parent of an existing node
 
-        Args:
-            child: The existing node
-            new_parent: The new parent node to insert
-
-        Returns:
-            The new parent node
-        """
         old_parent = child.parent
 
         # Set up new parent
@@ -204,12 +152,11 @@ class TreeManipulator:
 
 
 class ConditionAnalyzer:
-    """Utility class for analyzing WHERE and JOIN conditions"""
 
     @staticmethod
     def extract_conditions(tree: QueryTree) -> List[Dict[str, any]]:
         """
-        Extract all conditions from WHERE/ON clauses
+        Ekstrak kondisi dari tree
 
         Args:
             tree: The root of the query tree
@@ -224,9 +171,10 @@ class ConditionAnalyzer:
                 'tables': ['table1', 'table2']
             }
         """
+
         conditions = []
 
-        # Look for WHERE, ON nodes
+        # cek node kondisi WHERE
         if tree.type in [QueryTypes.WHERE, QueryTypes.ON, QueryTypes.CONDITION]:
             condition = ConditionAnalyzer._parse_condition(tree)
             if condition:
@@ -239,25 +187,19 @@ class ConditionAnalyzer:
 
     @staticmethod
     def _parse_condition(node: QueryTree) -> Optional[Dict[str, any]]:
-        """
-        Parse a single condition node
 
-        Returns:
-            Condition dictionary or None
-        """
-        # Look for comparison operators in the node or its children
         if not node:
             return None
 
-        # Check for COMPARISON type nodes
+        # cek COMPARISON node
         if node.type == QueryTypes.COMPARISON:
-            # Extract operator, left, right from children
+    
             if len(node.childs) >= 2:
                 left = node.childs[0].val if node.childs[0] else None
                 right = node.childs[1].val if len(node.childs) > 1 else None
                 operator = node.val if node.val else QueryOperators.EQ
 
-                # Extract tables from qualified names (e.g., 'users.id' -> 'users')
+                # table dengan referensi kolom
                 tables = set()
                 if left and '.' in left:
                     tables.add(left.split('.')[0])
@@ -273,7 +215,7 @@ class ConditionAnalyzer:
                     'node': node
                 }
 
-        # Simple parsing from node value if it contains operators
+        # simple expression condition
         if node.val and any(op in node.val for op in [QueryOperators.EQ, QueryOperators.GT, QueryOperators.LT, QueryOperators.GTE, QueryOperators.LTE, QueryOperators.NEQ, QueryOperators.LIKE]):
             tables = set()
             for part in node.val.split():
@@ -291,30 +233,14 @@ class ConditionAnalyzer:
 
     @staticmethod
     def split_conjunctive_conditions(conditions: List[Dict]) -> List[List[Dict]]:
-        """
-        Split AND conditions into separate groups
 
-        Args:
-            conditions: List of conditions
-
-        Returns:
-            List of condition groups (each group is a single condition)
-        """
         # Each condition becomes its own group for decomposition
         # This enables σθ1∧θ2(E) = σθ1(σθ2(E))
         return [[cond] for cond in conditions]
 
     @staticmethod
     def get_tables_in_condition(condition: Dict) -> Set[str]:
-        """
-        Extract table names referenced in a condition
 
-        Args:
-            condition: Condition dictionary
-
-        Returns:
-            Set of table names
-        """
         tables = set()
 
         if 'tables' in condition:
@@ -331,15 +257,7 @@ class ConditionAnalyzer:
 
     @staticmethod
     def is_join_condition(condition: Dict) -> bool:
-        """
-        Check if condition is a join condition (references multiple tables)
 
-        Args:
-            condition: Condition dictionary
-
-        Returns:
-            True if it's a join condition
-        """
         tables = ConditionAnalyzer.get_tables_in_condition(condition)
         # Join condition involves columns from 2+ different tables
         return len(tables) >= 2
@@ -350,67 +268,43 @@ class CostEstimator:
 
     @staticmethod
     def estimate_selectivity(condition: Dict) -> float:
-        """
-        Estimate selectivity of a condition (fraction of rows passing)
 
-        Args:
-            condition: Condition dictionary
-
-        Returns:
-            Selectivity factor (0.0 to 1.0)
-        """
-        # Default heuristics based on operator
+        # default
         operator = condition.get('operator', '=')
 
         if operator == '=':
-            return 0.1  # Equality is highly selective
+            return 0.1  # equality, highly selective
         elif operator in [QueryOperators.GT, QueryOperators.LT, QueryOperators.GTE, QueryOperators.LTE]:
-            return 0.33  # Range queries are moderately selective
+            return 0.33  # range queries
         elif operator in [QueryOperators.LIKE, QueryOperators.IN]:
-            return 0.5  # Pattern matching varies
+            return 0.5  # moderate selectivity
         else:
             return 0.5  # Default
 
     @staticmethod
     def estimate_result_size(operation: str, input_size: int, selectivity: float = 1.0) -> int:
-        """
-        Estimate result size after an operation
 
-        Args:
-            operation: Type of operation ('select', 'join', 'project')
-            input_size: Input size
-            selectivity: Selectivity factor
-
-        Returns:
-            Estimated result size
-        """
         if operation == QueryTypes.SELECT:
             return int(input_size * selectivity)
-        elif operation == QueryTypes.PROJECT:
-            return input_size  # Projection doesn't change row count
+        elif operation == QueryTypes.PROJECTION:
+            return input_size
         elif operation == QueryTypes.JOIN:
-            # Simplified join size estimation
             return int(input_size * selectivity * 10)  # Rough estimate
         else:
             return input_size
 
 
-# Convenience functions
 def find_all_joins(tree: QueryTree) -> List[QueryTree]:
-    """Find all JOIN nodes in the tree"""
     return TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
 
 
 def find_all_selections(tree: QueryTree) -> List[QueryTree]:
-    """Find all WHERE/selection nodes in the tree"""
     return TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
 
 
 def get_all_tables(tree: QueryTree) -> Set[str]:
-    """Get all tables referenced in the query"""
     return TreeAnalyzer.extract_tables(tree)
 
 
 def get_all_columns(tree: QueryTree) -> Set[str]:
-    """Get all columns referenced in the query"""
     return TreeAnalyzer.extract_columns(tree)

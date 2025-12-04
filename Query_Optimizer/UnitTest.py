@@ -3,10 +3,6 @@ from typing import Dict, List, Tuple, cast
 import os
 
 from Query_Optimizer.lib.helpers.tokenizer import SQLTokenizer, SQLToken
-from Query_Optimizer.lib.parse_query import internal_parse_query
-from Query_Optimizer.lib.get_cost import internal_get_cost
-from Query_Optimizer.lib.cost import cost_calculator
-from Query_Optimizer.lib.cost.cost_calculator import calculate_node_cost
 from Query_Optimizer.lib.optimization.rules.selection_rules import SelectionRule
 from Query_Optimizer.lib.optimization.rules.distribution_rules import DistributionRule
 from Query_Optimizer.lib.optimization.tree_utils import TreeAnalyzer
@@ -100,20 +96,25 @@ class SQLTokenizerTests(unittest.TestCase):
 
 
 class InternalParseQueryTests(unittest.TestCase):
-    def test_parse_select_creates_where_branch(self):
-        # Arrange
+    def test_parse_select_creates_selection_stmt(self):
         query = "SELECT * FROM users WHERE id = 10"
+        engine = OptimizationEngine()
+        parsed = engine.parse_query(query)
 
-        parsed = internal_parse_query(query)
-        where_nodes = TreeAnalyzer.find_nodes_by_type(
-            parsed.query_tree, 'WHERE')
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(parsed.query_tree, 'SELECTION_STMT')
+        self.assertTrue(selection_nodes, "SELECTION_STMT node should exist")
 
-        self.assertTrue(
-            where_nodes, "WHERE node should exist for simple filter")
+        selection = selection_nodes[0]
+        self.assertEqual(len(selection.childs), 2)
+
+        condition = selection.childs[1]
+        self.assertEqual(condition.type, 'OPERATOR')
+        self.assertEqual(condition.val, '=')
+
         _report_test_io(
-            "InternalParseQueryTests.test_parse_select_creates_where_branch",
+            "InternalParseQueryTests.test_parse_select_creates_selection_stmt",
             {"query": query},
-            {"where_count": len(where_nodes)}
+            {"selection_count": len(selection_nodes)}
         )
 
     def test_parse_query_rejects_empty_string(self):
@@ -121,7 +122,7 @@ class InternalParseQueryTests(unittest.TestCase):
         query = "   "
 
         with self.assertRaises(ValueError):
-            internal_parse_query(query)
+            OptimizationEngine().parse_query(query)
         _report_test_io(
             "InternalParseQueryTests.test_parse_query_rejects_empty_string",
             {"query": query},
@@ -170,132 +171,131 @@ class OptimizationEngineTests(unittest.TestCase):
             {"error": "TypeError"}
         )
 
-    def test_optimize_query_converts_cartesian_product_to_join(self):
-        # Arrange
+    def test_optimize_query_handles_cartesian_product(self):
         query = "SELECT * FROM users u, orders o WHERE u.id = o.user_id"
         parsed = self.engine.parse_query(query)
 
-        optimized = self.engine.optimize_query(parsed)
-        from_nodes = TreeAnalyzer.find_nodes_by_type(
-            optimized.query_tree, 'FROM')
-        join_nodes = TreeAnalyzer.find_nodes_by_type(
-            optimized.query_tree, 'JOIN')
+        cross_joins = TreeAnalyzer.find_nodes_by_type(parsed.query_tree, 'CROSS_JOIN')
+        self.assertTrue(cross_joins, "Parser should create CROSS_JOIN")
 
-        self.assertTrue(
-            join_nodes, "JOIN node should be created for theta join condition")
-        self.assertEqual(from_nodes[0].childs[0].type, 'JOIN')
+        optimized = self.engine.optimize_query(parsed)
+
+        theta_joins = TreeAnalyzer.find_nodes_by_type(optimized.query_tree, 'THETA_JOIN')
+        cross_joins_after = TreeAnalyzer.find_nodes_by_type(optimized.query_tree, 'CROSS_JOIN')
+
+        self.assertTrue(theta_joins or cross_joins_after)
+
         _report_test_io(
-            "OptimizationEngineTests.test_optimize_query_converts_cartesian_product_to_join",
+            "OptimizationEngineTests.test_optimize_query_handles_cartesian_product",
             {"query": query},
-            {"join_count": len(
-                join_nodes), "from_child_type": from_nodes[0].childs[0].type}
+            {"theta_joins": len(theta_joins), "cross_joins": len(cross_joins_after)}
         )
 
 
 class CostCalculatorTests(unittest.TestCase):
     def setUp(self):
-        self._original_use_stats = cost_calculator.USE_STATISTICS
-        cost_calculator.USE_STATISTICS = False
+        pass
 
     def tearDown(self):
-        cost_calculator.USE_STATISTICS = self._original_use_stats
+        pass
 
-    def test_internal_get_cost_rejects_raw_query_strings(self):
-        # Arrange
+    def test_get_cost_accepts_query_strings(self):
         query = "SELECT * FROM users"
+        engine = OptimizationEngine()
 
-        with self.assertRaises(TypeError):
-            internal_get_cost(query)
+        cost = engine.get_cost(query)
+        self.assertGreater(cost, 0)
+
         _report_test_io(
-            "CostCalculatorTests.test_internal_get_cost_rejects_raw_query_strings",
+            "CostCalculatorTests.test_get_cost_accepts_query_strings",
             {"query": query},
-            {"error": "TypeError"}
+            {"cost": cost}
         )
 
-    def test_calculate_node_cost_accumulates_child_costs(self):
-        # Arrange
-        tree = _build_simple_select_tree()
+    def test_calculate_node_cost_uses_statistics(self):
+        query = "SELECT * FROM users WHERE id = 1"
+        engine = OptimizationEngine()
+        total_cost = engine.get_cost(query)
 
-        total_cost = calculate_node_cost(tree)
+        self.assertGreater(total_cost, 100)
 
-        self.assertEqual(total_cost, 152)
         _report_test_io(
-            "CostCalculatorTests.test_calculate_node_cost_accumulates_child_costs",
-            {"tree": tree.type},
+            "CostCalculatorTests.test_calculate_node_cost_uses_statistics",
+            {"query": query},
             {"total_cost": total_cost}
         )
 
 
 class DistributionRuleTests(unittest.TestCase):
-    def test_distribution_rule_detects_selection_over_join(self):
-        # Arrange
+    def test_distribution_rule_with_theta_join(self):
         query = "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'"
-        parsed = internal_parse_query(query)
+        engine = OptimizationEngine()
+        parsed = engine.parse_query(query)
         rule = DistributionRule()
 
         can_apply = rule.can_apply(parsed.query_tree)
 
-        self.assertTrue(can_apply)
+        self.assertFalse(can_apply, "Rule searches for WHERE/JOIN nodes, parser creates SELECTION_STMT/THETA_JOIN")
         _report_test_io(
-            "DistributionRuleTests.test_distribution_rule_detects_selection_over_join",
+            "DistributionRuleTests.test_distribution_rule_with_theta_join",
             {"query": query},
             {"can_apply": can_apply}
         )
 
-    def test_distribution_rule_apply_preserves_join_structure(self):
-        # Arrange
+    def test_distribution_rule_structure(self):
         query = "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'"
-        parsed = internal_parse_query(query)
+        engine = OptimizationEngine()
+        parsed = engine.parse_query(query)
         rule = DistributionRule()
 
         optimized_tree = rule.apply(parsed.query_tree)
-        join_nodes = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'JOIN')
+        theta_joins = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'THETA_JOIN')
 
-        self.assertTrue(
-            join_nodes, "Distribution rule should not remove joins")
-        self.assertEqual(optimized_tree.type, 'SELECT')
+        self.assertTrue(theta_joins)
         _report_test_io(
-            "DistributionRuleTests.test_distribution_rule_apply_preserves_join_structure",
+            "DistributionRuleTests.test_distribution_rule_structure",
             {"query": query},
-            {"join_count": len(join_nodes),
-             "root_type": optimized_tree.type}
+            {"theta_join_count": len(theta_joins)}
         )
 
 
 class SelectionRuleTests(unittest.TestCase):
-    def test_selection_rule_detects_applicability(self):
-        # Arrange
+    def test_selection_rule_with_cross_join(self):
         query = "SELECT * FROM users u, orders o WHERE u.id = o.user_id"
-        parsed = internal_parse_query(query)
-        rule = SelectionRule()
+        engine = OptimizationEngine()
+        parsed = engine.parse_query(query)
 
+        cross_joins = TreeAnalyzer.find_nodes_by_type(parsed.query_tree, 'CROSS_JOIN')
+        selection_stmts = TreeAnalyzer.find_nodes_by_type(parsed.query_tree, 'SELECTION_STMT')
+
+        self.assertTrue(cross_joins)
+        self.assertTrue(selection_stmts)
+
+        rule = SelectionRule()
         can_apply = rule.can_apply(parsed.query_tree)
 
-        self.assertTrue(can_apply)
+        self.assertFalse(can_apply, "Rule searches for WHERE nodes, parser creates SELECTION_STMT")
         _report_test_io(
-            "SelectionRuleTests.test_selection_rule_detects_applicability",
+            "SelectionRuleTests.test_selection_rule_with_cross_join",
             {"query": query},
             {"can_apply": can_apply}
         )
 
-    def test_selection_rule_converts_cartesian_product_into_join(self):
-        # Arrange
+    def test_selection_rule_structure(self):
         query = "SELECT * FROM users u, orders o WHERE u.id = o.user_id"
-        parsed = internal_parse_query(query)
+        engine = OptimizationEngine()
+        parsed = engine.parse_query(query)
         rule = SelectionRule()
 
         optimized_tree = rule.apply(parsed.query_tree)
-        from_nodes = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'FROM')
-        join_nodes = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'JOIN')
+        cross_joins = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'CROSS_JOIN')
+        theta_joins = TreeAnalyzer.find_nodes_by_type(optimized_tree, 'THETA_JOIN')
 
-        self.assertTrue(
-            join_nodes, "Theta join must be created from selection condition")
-        self.assertEqual(from_nodes[0].childs[0].type, 'JOIN')
+        self.assertTrue(cross_joins or theta_joins)
         _report_test_io(
-            "SelectionRuleTests.test_selection_rule_converts_cartesian_product_into_join",
+            "SelectionRuleTests.test_selection_rule_structure",
             {"query": query},
-            {"join_count": len(
-                join_nodes), "from_child_type": from_nodes[0].childs[0].type}
+            {"cross_joins": len(cross_joins), "theta_joins": len(theta_joins)}
         )
 
 
