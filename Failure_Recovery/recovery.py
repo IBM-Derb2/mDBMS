@@ -1,16 +1,14 @@
 from datetime import datetime
 import json
 from typing import Optional, Set, Dict, Any, List
-from log_config import WalAction, WalType
-from log_writer import LogWriter
-from recovery_model import RecoverCriteria, LogEntry
-from log_parser import LogParser
-from buffer_manager import BufferManager
+from .types import WalAction, WalType, RecoverCriteria, LogEntry
+from .buffer_manager import BufferManager
+from .wal_manager import WALManager
 
 class RecoveryEngine:
-    def __init__(self, log_directory: str = "test_logs", buffer_manager: BufferManager = None):
-        self.log_parser = LogParser(log_directory=log_directory)
-        self.log_writer = LogWriter(log_directory=log_directory)
+    def __init__(self, log_directory: str = "test_logs", wal_manager=None, buffer_manager: BufferManager = None):
+
+        self.wal_manager = wal_manager or WALManager(log_directory=log_directory)
         self.buffer_manager = buffer_manager
 
     def recover(self) -> Dict[str, Any]:
@@ -49,17 +47,17 @@ class RecoveryEngine:
         
         print("\n[Recovery] ===== UNDO PHASE =====")
         undo_count = 0
-        
-        for entry in self.log_parser.iter_backward():
+
+        for entry in self.wal_manager.iter_backward():
             if not undo_list:
                 break
-                
+
             tx_id = entry.transaction_id
             action = entry.action
-            
-            if action == "clr":
+
+            if action == "compensation":
                 continue
-                
+
             if tx_id in undo_list and action in ["insert", "update", "delete"]:
                 print(f"[Recovery] Undoing TX {tx_id} {action.upper()} on {entry.table_name}")
                 self._apply_undo(entry)
@@ -91,15 +89,28 @@ class RecoveryEngine:
 
         undo_operations = []
         criteria = RecoverCriteria(transaction_id=tx_id)
-        for entry in self.log_parser.iter_backward(criteria):
+        print(f"[Recovery Debug] Searching WAL backward for TX {tx_id}...")
+        print(f"[Recovery Debug] Criteria: {criteria}")
+        
+        entry_count = 0
+        for entry in self.wal_manager.iter_backward(criteria):
+            entry_count += 1
+            print(f"[Recovery Debug] Entry {entry_count}: action={entry.action}, tx_id={entry.transaction_id}, matches={entry.transaction_id == tx_id}")
+            
             if entry.transaction_id != tx_id:
+                print(f"[Recovery Debug]   -> Skipping (different tx_id)")
                 continue
-                
+
             if entry.action == "start":
+                print(f"[Recovery Debug]   -> Reached START for TX {tx_id}, stopping search")
                 break
 
             elif entry.action in ["insert", "update", "delete"]:
+                print(f"[Recovery Debug]   -> Found operation to undo: {entry.action} on {entry.table_name}")
                 undo_operations.append(entry)
+        
+        print(f"[Recovery Debug] Iterated {entry_count} entries total")
+        print(f"[Recovery Debug] Collected {len(undo_operations)} operations to undo")
         
         for entry in undo_operations:
             print(f"[Recovery] Undoing TX {tx_id} {entry.action.upper()} on {entry.table_name}")
@@ -121,7 +132,7 @@ class RecoveryEngine:
             "transaction_id": tx_id
         }
         abort_str = json.dumps(abort_entry)
-        self.log_writer.write_to_file(abort_str)
+        self.wal_manager.write_to_file(abort_str)
         print(f"[Recovery] Writing ABORT for incomplete TX {tx_id}")
     
     def _write_compensation_log(self, entry):
@@ -129,7 +140,7 @@ class RecoveryEngine:
         Write Compensation Log Record (CLR) for undo operation.
         
         CLR Format (simplified):
-        - action: 'clr' (special marker)
+        - action: 'compensation' (special marker)
         - original_action: The action being undone (insert/update/delete)
         - transaction_id: Same as original
         - table_name: Same as original
@@ -145,21 +156,22 @@ class RecoveryEngine:
         Args:
             entry: LogEntry being undone
         """
-        clr_entry = {
+
+        compensation_entry = {
             "timestamp": datetime.now().isoformat(),
             "type": WalType.EXECUTION.value,
-            "action": "clr",  # Special marker for compensation log
+            "action": "compensation",  # Special marker for compensation log
             "original_action": entry.action,  # What was undone
             "transaction_id": entry.transaction_id,
             "tablename": entry.table_name,
             "pk_value": entry.pk_value,
-            "record_before": None,  # CLR has no before-image
+            "record_before": entry.new_data,  # What was there before undo (for documentation)
             "record_after": entry.old_data  # The value we restored
         }
-        
-        clr_str = json.dumps(clr_entry)
-        self.log_writer.write_to_file(clr_str)
-        
+
+        compensation_str = json.dumps(compensation_entry)
+        self.wal_manager.write_to_file(compensation_str)
+
         print(f"    [CLR] Compensation log written for TX {entry.transaction_id}")
         
     def _apply_redo(self, entry: LogEntry) -> None:
@@ -172,6 +184,7 @@ class RecoveryEngine:
         Args:
             entry: LogEntry with write operation details
         """
+
         if not self.buffer_manager or not entry.table_name:
             print(f"    [Warning] Buffer manager not available, skipping REDO")
             return
@@ -205,6 +218,7 @@ class RecoveryEngine:
         Args:
             entry: LogEntry containing operation details to undo
         """
+
         action = entry.action
         table = entry.table_name
         pk = entry.pk_value
@@ -231,13 +245,13 @@ class RecoveryEngine:
     
     def _find_last_checkpoint(self):
         """Returns (found, checkpoint_data, entries_after_checkpoint)"""
+
         entries_after = []
-        
-        for entry in self.log_parser.iter_backward():
+
+        for entry in self.wal_manager.iter_backward():
             if entry.raw_log.get("type") == "checkpoint":
                 return (True, entry.raw_log, entries_after)
             entries_after.append(entry)
-        
 
         # No checkpoint - return all entries
         return (False, None, entries_after)

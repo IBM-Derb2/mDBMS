@@ -1,12 +1,11 @@
 import threading
 import time
-import json
-from datetime import datetime
-from typing import Any, Callable, Callable, Set, Optional
-from log_config import WalType, WalAction
-from log_writer import LogWriter
-from log_parser import LogParser
-from recovery import RecoveryEngine
+
+from typing import Any, Callable, Set
+from .types import WalAction
+from .wal_manager import WALManager
+from .log_history import LogHistoryManager
+from .recovery import RecoveryEngine
 
 class FailureRecoveryManager:
     """
@@ -18,33 +17,32 @@ class FailureRecoveryManager:
     - Background thread monitors buffer and triggers checkpoint
     """
     
-    def __init__(self, buffer_manager, 
+    def __init__(self, buffer_manager,
                  load_table_callback: Callable[[str], Any],
                  save_buffer_callback: Callable[[Any], Any],
-                 log_directory: str = "wal_logs",
+                 log_directory: str = "logs",
                  checkpoint_interval: int = 10):
         """
         Initialize Failure Recovery Manager.
-        
+
         Args:
             buffer_manager: Reference to BufferManager
-            read_disk_callback: Fungsi dari SM untuk membaca disk (fetch)
-            save_disk_callback: Fungsi dari SM untuk menyimpan ke disk (flush)
-            log_directory: Directory untuk WAL files
+            load_table_callback: Function from SM to read disk (fetch)
+            save_buffer_callback: Function from SM to save to disk (flush)
+            log_directory: Directory for WAL files
             checkpoint_interval: Checkpoint check interval (seconds)
         """
-        # References to other managers
+        
         self.buffer_manager = buffer_manager
 
-        self.buffer_manager.set_load_table_routine(load_table_callback)
-        self.buffer_manager.set_save_buffer_routine(save_buffer_callback)
-        
-        # WAL components
-        self.wal_writer = LogWriter(log_directory)
-        self.wal_parser = LogParser(log_directory)
-        
-        # Recovery engine for undo operations
-        self.recovery_engine = RecoveryEngine(log_directory, buffer_manager)
+        self.wal_manager = WALManager(log_directory)
+        self.log_history_manager = LogHistoryManager(log_directory)
+
+        buffer_manager.set_load_table_routine(load_table_callback)
+        buffer_manager.set_save_buffer_routine(save_buffer_callback)
+        buffer_manager.set_wal_manager(self.wal_manager)
+
+        self.recovery_engine = RecoveryEngine(log_directory, self.wal_manager, buffer_manager)
         
         # Track active transactions
         self.active_transactions: Set[int] = set()
@@ -54,9 +52,31 @@ class FailureRecoveryManager:
         self.checkpoint_interval = checkpoint_interval
         self.checkpoint_thread = None
         self.running = False
-        
+
         print(f"[FRM] Initialized with log directory: {log_directory}")
-    
+
+    def get_wal_manager(self):
+        return self.wal_manager
+
+    def get_log_history_manager(self):
+        return self.log_history_manager
+
+    def get_buffered_row(self, table_name: str, pk_value: dict):
+        """
+        Get buffered row data if exists in buffer.
+
+        Args:
+            table_name: Table name
+            pk_value: Primary key value dict
+
+        Returns:
+            Row data dict if buffered, None otherwise
+        """
+        key = self.buffer_manager._get_buffer_key(table_name, pk_value)
+        if key in self.buffer_manager.buffer_data:
+            return self.buffer_manager.buffer_data[key].data
+        return None
+
     # ========== LIFECYCLE ==========
     
     def start(self):
@@ -97,17 +117,14 @@ class FailureRecoveryManager:
             print(f"[FRM] TX {tx_id} ended (active: {len(self.active_transactions)})")
     
     def write_log_entry(self, tx_id: int, action: WalAction):
-        self.wal_writer.log_lifecycle(tx_id, action)
+        self.wal_manager.log_lifecycle(tx_id, action)
         print(f"[FRM] Logged {action.value.upper()} for TX {tx_id}")
 
     
-    # ========== WRITE OPERATIONS (Called by BufferManager) ==========
-    
-    def log_write(self, tx_id: int, table: str, pk: dict, 
+    def log_write(self, tx_id: int, table: str, pk: dict,
                   old_data: dict, new_data: dict):
-        self.wal_writer.log_operation(tx_id, table, pk, old_data, new_data)
-        
-        # Kita bisa print manual untuk debug
+        self.wal_manager.log_operation(tx_id, table, pk, old_data, new_data)
+
         action = "UPDATE"
         if old_data is None: action = "INSERT"
         elif new_data is None: action = "DELETE"
@@ -158,9 +175,9 @@ class FailureRecoveryManager:
         print(f"[FRM] Flush completed - all dirty blocks now persisted")
         
         # Step 2: Write checkpoint entry to WAL
-        self.wal_writer.log_checkpoint(ongoing_transactions)
+        self.wal_manager.log_checkpoint(ongoing_transactions)
         print(f"[FRM] Checkpoint entry written to WAL")
-        
+
         # Step 3: Clear WAL entries before oldest ongoing transaction
         print(f"[FRM] Clearing WAL before oldest ongoing transaction...")
         self.clear_wal_after_checkpoint(ongoing_transactions)
@@ -178,13 +195,11 @@ class FailureRecoveryManager:
         print("[FRM] Starting WAL cleanup after checkpoint...")
         
         if not ongoing_transactions:
-            # No ongoing transactions - can clear entire WAL
             print("[FRM] No ongoing transactions, clearing entire WAL")
-            self.wal_writer.clear_entire_wal()
+            self.wal_manager.clear_entire_wal()
         else:
-            # Clear entries before oldest ongoing transaction
             print(f"[FRM] Clearing WAL before oldest ongoing transaction")
-            self.wal_writer.clear_wal_before_oldest_transaction(ongoing_transactions)
+            self.wal_manager.clear_wal_before_oldest_transaction(ongoing_transactions)
             
         print("[FRM] WAL cleanup completed")
 
