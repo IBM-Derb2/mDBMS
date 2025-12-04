@@ -72,17 +72,20 @@ class Server:
 
         print(f"[Server Debug] Formatting {len(results)} results")
         for idx, result in enumerate(results):
-            print(f"[Server Debug] Result {idx}: has_data={result.data is not None}, rows_count={result.rows_count}, message='{result.message}'")
-            
+            print(
+                f"[Server Debug] Result {idx}: has_data={result.data is not None}, rows_count={result.rows_count}, message='{result.message}'")
+
             # Show ExecutionResult metadata
             metadata = f"[TID: {result.transaction_id}] {result.message}"
 
             # Check if we have data to display (for SELECT queries)
-            has_data = result.data and hasattr(result.data, 'data') and result.data.data
-            
+            has_data = result.data and hasattr(
+                result.data, 'data') and result.data.data
+
             if has_data:
                 rows = result.data.data
-                print(f"[Server Debug] Result {idx} has {len(rows)} rows of data")
+                print(
+                    f"[Server Debug] Result {idx} has {len(rows)} rows of data")
                 if rows:
                     output.append(f"\n{metadata}")
 
@@ -198,10 +201,9 @@ class Server:
                                     return
 
                                 try:
-                                    # Set client IP and port for transaction ID generation
-                                    self.qp.client_ip = client_address[0]
-                                    self.qp.client_port = client_address[1]
-                                    results = self.qp.execute_query(content)
+                                    # Pass client address for transaction ID generation
+                                    results = self.qp.execute_query(
+                                        content, client_address)
                                     response_content = self.format_result(
                                         results)
                                     print(

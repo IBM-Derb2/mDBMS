@@ -9,7 +9,7 @@ import json
 HOST = 'localhost'
 PORT = 8080
 HEARTBEAT_INTERVAL = 3  # seconds
-HEARTBEAT_TIMEOUT = 15  # seconds - increased for long-running queries like COMMIT
+HEARTBEAT_TIMEOUT = 7  # seconds - increased for long-running queries like COMMIT
 
 
 class Client:
@@ -98,7 +98,8 @@ class Client:
         start_time = time.time()
         timeout = 10
         while time.time() - start_time < timeout:
-            response_msg = self.receive_message(timeout=timeout - (time.time() - start_time))
+            response_msg = self.receive_message(
+                timeout=timeout - (time.time() - start_time))
             if not response_msg:
                 return None
 
