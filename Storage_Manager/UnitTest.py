@@ -2,13 +2,14 @@ import unittest
 import time
 import os
 import random
+import sys
 
-from storage_engine import StorageEngine
-from utils import DataRetrieval, Condition
-from serializer import Serializer
+from .storage_engine import StorageEngine
+from .utils import DataRetrieval, Condition
+from .serializer import Serializer
 
 
-class TestStorageEngine(unittest.TestCase):
+class TestStorageEngine(unittest.TestCase): # Main runs all methods that start with 'test_'
     
     @classmethod
     def setUpClass(cls):
@@ -94,7 +95,7 @@ class TestStorageEngine(unittest.TestCase):
         self.assertIsNotNone(stats)
         print(f"Test get_stats:\n{stats}")
 
-    def test_index_performance(self):
+    def test_index_performance_hash(self):
         TABLE_NAME = "student"
         COLUMN_NAME = "GPA"
         TARGET_VALUE = 4.0
@@ -102,7 +103,7 @@ class TestStorageEngine(unittest.TestCase):
 
         condition = [Condition(column=COLUMN_NAME, operation="=", operand=TARGET_VALUE)]
 
-        print(f"\nTest index_performance:\nStarting benchmark ({ITERATIONS} iterations)")
+        print(f"\nTest index_performance_hash:\nStarting benchmark ({ITERATIONS} iterations)")
 
         idx_file = f"data/{TABLE_NAME}_{COLUMN_NAME}_hash.dat"
         if os.path.exists(idx_file):
@@ -164,6 +165,76 @@ class TestStorageEngine(unittest.TestCase):
 
         self.assertGreater(speedup, 1.0)
 
+    def test_index_performance_btree(self):
+        TABLE_NAME = "student"
+        COLUMN_NAME = "GPA"
+        TARGET_VALUE = 4.0
+        ITERATIONS = 100
+
+        condition = [Condition(column=COLUMN_NAME, operation="=", operand=TARGET_VALUE)]
+
+        print(f"\nTest index_performance_btree:\nStarting benchmark ({ITERATIONS} iterations)")
+
+        idx_file = f"data/{TABLE_NAME}_{COLUMN_NAME}_btree.dat"
+        if os.path.exists(idx_file):
+            os.remove(idx_file)
+
+        start_idx = time.perf_counter()
+        self.storage.set_index(TABLE_NAME, COLUMN_NAME, "b+ tree")
+        end_idx = time.perf_counter()
+
+        self.assertTrue(os.path.exists(idx_file))
+        size_kb = os.path.getsize(idx_file) / 1024
+        print(f"B+ Tree index created: {(end_idx - start_idx)*1000:.4f}ms, {size_kb:.2f}KB")
+
+        dr_linear = DataRetrieval(
+            table=TABLE_NAME,
+            column=["*"],
+            conditions=condition,
+            search_type="linear"
+        )
+
+        linear_times = []
+        for _ in range(ITERATIONS):
+            start = time.perf_counter()
+            res_linear = self.storage.read_block(dr_linear)
+            end = time.perf_counter()
+            linear_times.append((end - start) * 1000)
+
+        linear_avg = sum(linear_times) / len(linear_times)
+        linear_min = min(linear_times)
+        linear_count = res_linear.rows_count
+
+        print(f"Linear scan: {linear_avg:.4f}ms avg, {linear_min:.4f}ms min, {linear_count} rows")
+
+        dr_index = DataRetrieval(
+            table=TABLE_NAME,
+            column=["*"],
+            conditions=condition,
+            search_type="index",
+            index_column=COLUMN_NAME
+        )
+
+        index_times = []
+        for _ in range(ITERATIONS):
+            start = time.perf_counter()
+            res_index = self.storage.read_block(dr_index)
+            end = time.perf_counter()
+            index_times.append((end - start) * 1000)
+
+        index_avg = sum(index_times) / len(index_times)
+        index_min = min(index_times)
+        index_count = res_index.rows_count
+
+        print(f"B+ Tree index scan: {index_avg:.4f}ms avg, {index_min:.4f}ms min, {index_count} rows")
+
+        self.assertEqual(linear_count, index_count)
+
+        speedup = linear_avg / index_avg
+        print(f"B+ Tree Speedup: {speedup:.2f}x faster\n")
+
+        self.assertGreater(speedup, 1.0)
+
     def test_read_block(self):
         dr = DataRetrieval(
             table="student",
@@ -176,4 +247,17 @@ class TestStorageEngine(unittest.TestCase):
         print(f"Test read_block:\n{rows.rows_count} rows found (GPA > 3.5)")
         
 if __name__ == "__main__":
-    unittest.main(verbosity=0)
+
+    verbosity = 0
+
+    if len(sys.argv) > 1:
+        try:
+            v = int(sys.argv[1])
+            if v in (0, 1, 2):
+                verbosity = v
+        except ValueError:
+            pass  
+
+        sys.argv = sys.argv[:1]
+
+    unittest.main(verbosity=verbosity)
