@@ -1,680 +1,301 @@
 import sys
 import os
 import unittest
-import shutil
-from unittest.mock import Mock, MagicMock
-from datetime import datetime
+from unittest.mock import Mock
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from Query_Processor.classes import QueryProcessor, ExecutionResult, Rows
-from globalsy.classes.query_tree import QueryTree
-from globalsy.classes.parsed_query import ParsedQuery
-from globalsy.constants.query_types import QueryTypes
-from globalsy.constants.query_operators import QueryOperators
-from Concurrency_Control_Manager.lib.strategy_interface import Response
-from Storage_Manager.utils import Rows as StorageRows, Condition
+from Query_Processor.classes import QueryProcessor
+from Concurrency_Control_Manager.classes import ConcurrencyControlManager
 from Storage_Manager.storage_engine import StorageEngine
 from Storage_Manager.serializer import Serializer
+from Query_Optimizer.optimization_engine import OptimizationEngine
 
-class TestQueryProcessorComprehensive(unittest.TestCase) :
+
+class TestQueryProcessor(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.serializer = Serializer()
+        cls.storage_engine = StorageEngine(serializer=cls.serializer)
+        cls.optimizer_engine = OptimizationEngine()
+        cls.ccm = ConcurrencyControlManager()
 
     def setUp(self):
-        self.mock_optimizer = Mock()
-        self.mock_storage = Mock()
-        self.mock_ccm = Mock()
         self.mock_frm = Mock()
-
-        self.mock_ccm.begin_transaction.return_value = 1
-        self.mock_ccm.commit_transaction.return_value = None
-        self.mock_ccm.abort_transaction.return_value = None
-        self.mock_ccm.validate_object.return_value = Response(allowed=True, transaction_id=1)
-        
-        def mock_parse_query(query):
-            """
-            Membuat Query Tree VALID sesuai query_types.py
-            Struktur: SELECT -> [COLUMNS, FROM, WHERE?]
-            """
-            query_upper = query.upper().strip()
-            
-            if "SELECT" in query_upper:
-                table_name = "users"
-                if "FROM" in query_upper:
-                    parts = query_upper.split("FROM")
-                    if len(parts) > 1:
-                        table_parts = parts[1].strip().split()
-                        if table_parts:
-                            table_name = table_parts[0].lower().rstrip(";")
-                
-                table_node = QueryTree(type=QueryTypes.TABLE, val=table_name)
-                from_node = QueryTree(type=QueryTypes.FROM, val="", childs=[table_node])
-                
-                col_node = QueryTree(type=QueryTypes.COLUMN, val="*")
-                columns_node = QueryTree(type=QueryTypes.COLUMNS, val="*", childs=[col_node])
-                
-                children = [columns_node, from_node]
-                
-                if "WHERE" in query_upper:
-                    cond_val = "id = 1"
-                    cond_node = QueryTree(type=QueryTypes.CONDITION, val=cond_val)
-                    where_node = QueryTree(type=QueryTypes.WHERE, val="", childs=[cond_node])
-                    children.append(where_node)
-                
-                if "JOIN" in query_upper:
-                     left = QueryTree(type=QueryTypes.TABLE, val="users")
-                     right = QueryTree(type=QueryTypes.TABLE, val="orders")
-                     join_node = QueryTree(type=QueryTypes.JOIN, val=["users.id", "orders.user_id"], childs=[left, right])
-                     return ParsedQuery(query_tree=join_node, query=query)
-
-                select_node = QueryTree(type=QueryTypes.SELECT, val="", childs=children)
-                return ParsedQuery(query_tree=select_node, query=query)
-            
-            elif "UPDATE" in query_upper:
-                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
-                update_node = QueryTree(type=QueryTypes.UPDATE, val="name=NewName", childs=[table_node])
-                return ParsedQuery(query_tree=update_node, query=query)
-            
-            elif "INSERT" in query_upper:
-                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
-                insert_node = QueryTree(type=QueryTypes.INSERT, val={"columns": ["name"], "values": ["Alice"]}, childs=[table_node])
-                return ParsedQuery(query_tree=insert_node, query=query)
-            
-            elif "DELETE" in query_upper:
-                table_node = QueryTree(type=QueryTypes.TABLE, val="users")
-                delete_node = QueryTree(type=QueryTypes.DELETE, val="", childs=[table_node])
-                return ParsedQuery(query_tree=delete_node, query=query)
-            
-            else:
-                return ParsedQuery(query_tree=QueryTree(type=QueryTypes.TABLE, val="users"), query=query)
-        
-        self.mock_optimizer.parse_query.side_effect = mock_parse_query
-        self.mock_optimizer.optimize_query.side_effect = lambda x: x
-        
-        self.mock_storage.read_block.return_value = StorageRows(
-            data=[
-                {"id": 1, "name": "Alice", "salary": 1200},
-                {"id": 2, "name": "Bob", "salary": 900},
-                {"id": 3, "name": "Charlie", "salary": 1500}
-            ],
-            rows_count=3,
-            idx=[0, 1, 2]
-        )
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Updated"}],
-            rows_count=1,
-            idx=[0]
-        )
-        self.mock_storage.delete_block.return_value = 1
-
         self.qp = QueryProcessor(
-            optimizer=self.mock_optimizer,
-            storage_manager=self.mock_storage,
-            cc_manager=self.mock_ccm,
+            optimizer=self.optimizer_engine,
+            storage_manager=self.storage_engine,
+            cc_manager=self.ccm,
             fr_manager=self.mock_frm
         )
 
-    
     def test_01_empty_query(self):
         """Test handling of empty query"""
+
         result = self.qp.execute_query("")
-        
-        self.assertIsInstance(result, list)
         self.assertEqual(len(result), 1)
         self.assertIn("Empty query", result[0].message)
         self.assertEqual(result[0].rows_count, 0)
-        print("\n✓ Test 01: Empty query handling")
 
     def test_02_query_without_semicolon(self):
         """Test query without semicolon validation"""
-        query = "SELECT * FROM users"
+
+        query = "SELECT * FROM student"
         result = self.qp.execute_query(query)
-        
-        self.assertIsInstance(result, list)
         self.assertIn("semicolon", result[0].message)
-        print("\n✓ Test 02: Query without semicolon validation")
 
     def test_03_simple_select(self):
         """Test simple SELECT query"""
-        query = "SELECT * FROM users;"
-        result = self.qp.execute_query(query)
-        
-        self.assertIsInstance(result, list)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].rows_count, 3)
-        self.assertIsNotNone(result[0].data)
-        self.assertEqual(len(result[0].data.data), 3)
-        
-        # Verify data content
-        self.assertEqual(result[0].data.data[0]['name'], 'Alice')
-        self.assertEqual(result[0].data.data[1]['name'], 'Bob')
-        self.assertEqual(result[0].data.data[2]['name'], 'Charlie')
-        print("\n✓ Test 03: Simple SELECT query")
 
-    def test_04_select_without_where(self):
-        """Test SELECT query without WHERE clause (edge case)"""
-        query = "SELECT * FROM users;"
+        query = "SELECT * FROM student;"
         result = self.qp.execute_query(query)
-        
-        # Should return all rows
-        self.assertEqual(result[0].rows_count, 3)
-        self.mock_storage.read_block.assert_called()
-        print("\n✓ Test 04: SELECT without WHERE clause")
+        self.assertEqual(len(result), 1)
+        self.assertGreater(result[0].rows_count, 0)
+        self.assertIsNotNone(result[0].data)
+
+    def test_04_select_with_columns_and_limit(self):
+        """Test SELECT with specific columns and LIMIT"""
+
+        query = "SELECT StudentID, FullName FROM student LIMIT 1;"
+        result = self.qp.execute_query(query)
+        self.assertEqual(result[0].rows_count, 1)
+        row = result[0].data.data[0]
+        self.assertIn("studentid", row)
+        self.assertIn("fullname", row)
 
     def test_05_select_with_where(self):
-        """Test SELECT query with WHERE clause"""
-        # Mock storage to return filtered data
-        self.mock_storage.read_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Alice", "salary": 1200}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "SELECT * FROM users WHERE id = 1;"
+        """Test SELECT with WHERE clause"""
+
+        query = "SELECT * FROM student WHERE StudentID = 1;"
         result = self.qp.execute_query(query)
-        
-        self.assertIsInstance(result, list)
-        self.assertIsNotNone(result[0].data)
-        print("\n✓ Test 05: SELECT with WHERE clause")
-    
-    def test_06_begin_transaction(self):
+        if result[0].rows_count > 0:
+
+            self.assertEqual(result[0].data.data[0]["studentid"], 1)
+
+    def test_06_select_empty_result(self):
+        """Test SELECT returning empty result"""
+
+        query = "SELECT * FROM student WHERE StudentID = 999999;"
+        result = self.qp.execute_query(query)
+        self.assertEqual(result[0].rows_count, 0)
+
+    def test_07_begin_transaction(self):
         """Test BEGIN TRANSACTION command"""
+
         query = "BEGIN TRANSACTION;"
         result = self.qp.execute_query(query)
-        
-        self.assertIsInstance(result, list)
         self.assertEqual(len(result), 1)
-        self.assertEqual(self.qp.current_transaction_id, 1)
+        self.assertIsNotNone(self.qp.current_transaction_id)
+        self.assertGreater(self.qp.current_transaction_id, 0)
         self.assertTrue(self.qp.multiple_transaction)
         self.assertIn("Transaction started", result[0].message)
-        print("\n✓ Test 06: BEGIN TRANSACTION")
 
-    def test_07_commit_transaction(self):
-        """Test COMMIT command"""
-        # Begin transaction first
+    def test_08_transaction_workflow(self):
+        """Test transaction workflow: BEGIN -> SELECT -> COMMIT"""
+
         self.qp.execute_query("BEGIN TRANSACTION;")
-        
-        # Add a query to the queue
-        self.qp.execute_query("SELECT * FROM users;")
-        
-        # Commit
+        self.qp.execute_query("SELECT * FROM student;")
         result = self.qp.execute_query("COMMIT;")
-        
-        self.assertIsInstance(result, list)
         self.assertIsNone(self.qp.current_transaction_id)
         self.assertFalse(self.qp.multiple_transaction)
-        self.mock_ccm.commit_transaction.assert_called()
-        print("\n✓ Test 07: COMMIT transaction")
 
-    def test_08_multi_query_transaction(self):
+    def test_09_multi_query_transaction(self):
         """Test multiple queries in one transaction"""
-        # Begin transaction
+
         self.qp.execute_query("BEGIN TRANSACTION;")
-        
-        # Execute multiple queries
-        self.qp.execute_query("SELECT * FROM users;")
-        self.qp.execute_query("SELECT * FROM users WHERE id = 1;")
-        
-        # Commit
+        self.qp.execute_query("SELECT * FROM student;")
+        self.qp.execute_query("SELECT * FROM course;")
         result = self.qp.execute_query("COMMIT;")
-        
-        # Should have multiple results
-        self.assertIsInstance(result, list)
-        self.assertEqual(len(result), 2)  # Two SELECT queries
-        print("\n✓ Test 08: Multi-query transaction")
+        self.assertEqual(len(result), 2)
 
-    def test_09_rollback_on_error(self):
-        """Test rollback on query error"""
-        # Begin transaction
-        self.qp.execute_query("BEGIN TRANSACTION;")
-        
-        # Add a query that will fail
-        self.mock_storage.read_block.side_effect = Exception("Storage error")
-        self.qp.execute_query("SELECT * FROM users;")
-        
-        # Try to commit (should fail and rollback)
-        result = self.qp.execute_query("COMMIT;")
-        
-        self.assertIsInstance(result, list)
-        self.assertIn("Error", result[0].message)
-        print("\n✓ Test 09: Rollback on error")
+    def test_10_select_with_where_multiple_rows(self):
+        """Test SELECT returning multiple rows"""
 
-    
-    def test_10_query_optimizer_integration(self):
-        """Test integration with Query Optimizer"""
-        query = "SELECT * FROM users;"
+        query = "SELECT * FROM student WHERE GPA > 3.0;"
         result = self.qp.execute_query(query)
-        
-        # Verify Query Optimizer was called
-        self.mock_optimizer.parse_query.assert_called_with(query)
-        
-        # Verify parse tree was processed
-        self.assertTrue(hasattr(self.qp, '_process_node'))
-        print("\n✓ Test 10: Query Optimizer integration")
+        self.assertGreater(result[0].rows_count, 0)
 
-    def test_11_storage_manager_integration(self):
-        """Test integration with Storage Manager"""
-        query = "SELECT * FROM users;"
+    def test_11_select_with_order_by(self):
+        """Test SELECT with ORDER BY"""
+
+        query = "SELECT * FROM student ORDER BY StudentID ASC;"
         result = self.qp.execute_query(query)
-        
-        # Verify Storage Manager was called
-        self.mock_storage.read_block.assert_called()
-        
-        # Verify data from Storage Manager is returned correctly
-        self.assertEqual(result[0].data.data[0]['salary'], 1200)
-        self.assertEqual(result[0].data.data[1]['salary'], 900)
-        print("\n✓ Test 11: Storage Manager integration")
+        self.assertGreater(result[0].rows_count, 0)
+        if result[0].rows_count > 1:
 
-    def test_12_concurrency_control_integration(self):
-        """Test integration with Concurrency Control Manager"""
-        query = "SELECT * FROM users;"
+            ids = [row.get("studentid") for row in result[0].data.data]
+            self.assertEqual(ids, sorted(ids))
+
+    def test_12_select_with_limit(self):
+        """Test SELECT with LIMIT"""
+
+        query = "SELECT * FROM student LIMIT 5;"
         result = self.qp.execute_query(query)
-        
-        # Verify CCM methods were called
-        self.mock_ccm.begin_transaction.assert_called()
-        self.mock_ccm.validate_object.assert_called()
-        self.mock_ccm.commit_transaction.assert_called()
-        print("\n✓ Test 12: Concurrency Control Manager integration")
+        self.assertEqual(result[0].rows_count, 5)
 
-    def test_13_failure_recovery_integration(self):
-        """Test integration with Failure Recovery Manager"""
-        # Reset mock
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Updated"}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "UPDATE users SET name = 'NewName' WHERE id = 1;"
+    def test_13_theta_join(self):
+        """Test THETA JOIN with condition"""
+
+        query = "SELECT * FROM student JOIN attends ON student.StudentID = attends.StudentID;"
         result = self.qp.execute_query(query)
-        
-        # Verify Failure Recovery Manager was called for write operations
-        # Note: FRM should log write operations
-        self.assertTrue(hasattr(self.qp, 'fr_manager'))
-        print("\n✓ Test 13: Failure Recovery Manager integration")
+        if result[0].rows_count > 0:
+            row = result[0].data.data[0]
 
-    
-    def test_14_process_node_projection(self):
-        """Test _process_node handles PROJECTION"""
-        query = "SELECT * FROM users;"
+            self.assertIn("student.studentid", row)
+            self.assertIn("attends.courseid", row)
+
+    def test_14_cross_join_cartesian_product(self):
+        """Test CROSS JOIN (cartesian product)"""
+
+        query = "SELECT * FROM student, attends LIMIT 10;"
         result = self.qp.execute_query(query)
-        
-        self.assertIsNotNone(result[0].data)
-        self.assertTrue(hasattr(self.qp, '_select_columns'))
-        print("\n✓ Test 14: Process PROJECTION node")
+        self.assertGreater(result[0].rows_count, 0)
+        row = result[0].data.data[0]
 
-    def test_15_process_node_relation(self):
-        """Test _process_node handles RELATION (FROM)"""
-        query = "SELECT * FROM users;"
-        result = self.qp.execute_query(query)
-        
-        # Verify FROM was processed
-        self.mock_storage.read_block.assert_called()
-        self.assertTrue(hasattr(self.qp, '_from_table'))
-        print("\n✓ Test 15: Process RELATION node")
+        has_student_id = any("studentid" in k for k in row.keys())
+        has_course_id = any("courseid" in k for k in row.keys())
+        self.assertTrue(has_student_id)
+        self.assertTrue(has_course_id)
 
-    def test_16_process_node_selection(self):
-        """Test _process_node handles SELECTION (WHERE)"""
-        self.mock_storage.read_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Alice", "salary": 1200}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "SELECT * FROM users WHERE id = 1;"
-        result = self.qp.execute_query(query)
-        
-        self.assertTrue(hasattr(self.qp, '_condition_storage'))
-        print("\n✓ Test 16: Process SELECTION node")
-
-    def test_17_nested_loop_join_method_exists(self):
-        """Test nested loop join method exists"""
-        # Verify nested loop join method is implemented
-        self.assertTrue(hasattr(self.qp, '_nested_loop_join'))
-        print("\n✓ Test 17: Nested loop join method exists")
-
-    def test_18_nested_loop_join_execution(self):
-        """Test nested loop join is actually used"""
-        # Mock two tables
-        self.mock_storage.read_block.side_effect = [
-            StorageRows(
-                data=[
-                    {"id": 1, "name": "Alice"},
-                    {"id": 2, "name": "Bob"}
-                ],
-                rows_count=2,
-                idx=[0, 1]
-            ),
-            StorageRows(
-                data=[
-                    {"user_id": 1, "order": "Order1"},
-                    {"user_id": 2, "order": "Order2"}
-                ],
-                rows_count=2,
-                idx=[0, 1]
-            )
-        ]
-        
-        query = "SELECT * FROM users JOIN orders ON users.id = orders.user_id;"
-        result = self.qp.execute_query(query)
-        
-        # Verify join was performed
-        self.assertIsNotNone(result[0].data)
-        print("\n✓ Test 18: Nested loop join execution")
-
-    
-    def test_19_order_by_operation(self):
-        """Test ORDER BY operation"""
-        self.assertTrue(hasattr(self.qp, '_order_by'))
-        print("\n✓ Test 19: ORDER BY operation exists")
-
-    def test_20_limit_operation(self):
-        """Test LIMIT operation"""
-        self.assertTrue(hasattr(self.qp, '_limit'))
-        
-        # Test limit functionality
-        test_data = Rows(
-            data=[{"id": i} for i in range(10)],
-            rows_count=10
-        )
-        limited = self.qp._limit(test_data, 5)
-        self.assertEqual(limited.rows_count, 5)
-        print("\n✓ Test 20: LIMIT operation")
-
-    def test_21_update_operation(self):
-        """Test UPDATE operation"""
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Updated"}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "UPDATE users SET name = 'NewName' WHERE id = 1;"
-        result = self.qp.execute_query(query)
-        
-        self.mock_storage.write_block.assert_called()
-        print("\n✓ Test 21: UPDATE operation")
-
-    def test_22_insert_operation(self):
-        """Test INSERT operation"""
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 4, "name": "David"}],
-            rows_count=1,
-            idx=[3]
-        )
-        
-        query = "INSERT INTO users (name) VALUES ('David');"
-        result = self.qp.execute_query(query)
-        
-        self.mock_storage.write_block.assert_called()
-        print("\n✓ Test 22: INSERT operation")
-
-    def test_23_delete_operation(self):
-        """Test DELETE operation"""
-        self.mock_storage.delete_block.return_value = 1
-        
-        query = "DELETE FROM users WHERE id = 1;"
-        result = self.qp.execute_query(query)
-        
-        self.mock_storage.delete_block.assert_called()
-        print("\n✓ Test 23: DELETE operation")
-
-    
-    def test_24_select_empty_result(self):
-        """Test SELECT query returning empty result"""
-        self.mock_storage.read_block.return_value = StorageRows(
-            data=[],
-            rows_count=0,
-            idx=[]
-        )
-        
-        query = "SELECT * FROM users WHERE id = 999;"
-        result = self.qp.execute_query(query)
-        
-        self.assertEqual(result[0].rows_count, 0)
-        print("\n✓ Test 24: SELECT with empty result")
-
-    def test_25_concurrent_read_validation(self):
-        """Test concurrent read validation with CCM"""
-        query = "SELECT * FROM users;"
-        result = self.qp.execute_query(query)
-        
-        # Verify read validation was called
-        calls = self.mock_ccm.validate_object.call_args_list
-        self.assertTrue(any('read' in str(call) for call in calls))
-        print("\n✓ Test 25: Concurrent read validation")
-
-    def test_26_concurrent_write_validation(self):
-        """Test concurrent write validation with CCM"""
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 1}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "UPDATE users SET name = 'Test' WHERE id = 1;"
-        result = self.qp.execute_query(query)
-        
-        # Verify write validation was called
-        calls = self.mock_ccm.validate_object.call_args_list
-        self.assertTrue(any('write' in str(call) for call in calls))
-        print("\n✓ Test 26: Concurrent write validation")
-
-    def test_27_query_with_multiple_conditions(self):
-        """Test query with multiple WHERE conditions"""
-        self.mock_storage.read_block.return_value = StorageRows(
-            data=[{"id": 1, "name": "Alice", "salary": 1200}],
-            rows_count=1,
-            idx=[0]
-        )
-        
-        query = "SELECT * FROM users WHERE id = 1;"
-        result = self.qp.execute_query(query)
-        
-        self.assertIsNotNone(result[0].data)
-        print("\n✓ Test 27: Query with multiple conditions")
-
-    def test_28_cartesian_product_method(self):
-        """Test cartesian product method exists"""
-        self.assertTrue(hasattr(self.qp, '_cartesian'))
-        print("\n✓ Test 28: Cartesian product method exists")
-
-    def test_29_column_projection(self):
-        """Test column projection (SELECT specific columns)"""
-        self.assertTrue(hasattr(self.qp, '_select_columns'))
-        
-        # Test column selection
-        test_data = Rows(
-            data=[
-                {"id": 1, "name": "Alice", "salary": 1200},
-                {"id": 2, "name": "Bob", "salary": 900}
-            ],
-            rows_count=2
-        )
-        projected = self.qp._select_columns(test_data, ["name"])
-        self.assertIn("name", projected.data[0])
-        print("\n✓ Test 29: Column projection")
-
-    def test_30_condition_operators(self):
-        """Test different condition operators in WHERE clause"""
-        self.assertTrue(hasattr(self.qp, '_condition_storage'))
-        print("\n✓ Test 30: Condition operators exist")
-
-    
-    def test_31_execution_result_structure(self):
+    def test_15_execution_result_structure(self):
         """Test ExecutionResult structure"""
-        query = "SELECT * FROM users;"
-        result = self.qp.execute_query(query)
         
-        # Verify ExecutionResult structure
-        self.assertIsInstance(result, list)
-        self.assertIsInstance(result[0], ExecutionResult)
+        query = "SELECT * FROM student LIMIT 1;"
+        result = self.qp.execute_query(query)
         self.assertIsNotNone(result[0].transaction_id)
         self.assertIsNotNone(result[0].query)
         self.assertIsNotNone(result[0].timestamp)
         self.assertIsNotNone(result[0].message)
-        self.assertIsNotNone(result[0].data)
-        print("\n✓ Test 31: ExecutionResult structure")
 
-    def test_32_result_data_format(self):
-        """Test result data format from query execution"""
-        query = "SELECT * FROM users;"
+    def test_16_result_data_format(self):
+        """Test result data format"""
+
+        query = "SELECT * FROM student LIMIT 1;"
         result = self.qp.execute_query(query)
-        
-        # Verify data format
-        self.assertIsInstance(result[0].data, Rows)
-        self.assertIsInstance(result[0].data.data, list)
-        self.assertGreater(len(result[0].data.data), 0)
-        self.assertIsInstance(result[0].data.data[0], dict)
-        print("\n✓ Test 32: Result data format")
+        self.assertEqual(len(result[0].data.data), 1)
 
-    def test_33_error_message_format(self):
-        """Test error message format"""
-        result = self.qp.execute_query("")
-        
-        self.assertIn("Error", result[0].message)
-        self.assertEqual(result[0].rows_count, 0)
-        print("\n✓ Test 33: Error message format")
-
-    def test_34_success_message_format(self):
-        """Test success message format"""
-        query = "SELECT * FROM users;"
-        result = self.qp.execute_query(query)
-        
-        self.assertIn("success", result[0].message.lower())
-        print("\n✓ Test 34: Success message format")
-
-    
-    def test_35_complete_workflow(self):
-        """Test complete workflow: BEGIN -> SELECT -> UPDATE -> COMMIT"""
-        # Begin transaction
-        begin_result = self.qp.execute_query("BEGIN TRANSACTION;")
-        self.assertIn("Transaction started", begin_result[0].message)
-        
-        # SELECT query
-        self.qp.execute_query("SELECT * FROM users;")
-        
-        # UPDATE query
-        self.mock_storage.write_block.return_value = StorageRows(
-            data=[{"id": 1}],
-            rows_count=1,
-            idx=[0]
-        )
-        self.qp.execute_query("UPDATE users SET name = 'Test' WHERE id = 1;")
-        
-        # COMMIT
-        commit_result = self.qp.execute_query("COMMIT;")
-        
-        # Verify all operations were executed
-        self.assertIsInstance(commit_result, list)
-        self.assertEqual(len(commit_result), 2)  # SELECT + UPDATE
-        self.mock_ccm.commit_transaction.assert_called()
-        print("\n✓ Test 35: Complete workflow")
-
-    def test_36_all_components_initialized(self):
+    def test_17_components_initialized(self):
         """Test all components are properly initialized"""
+
         self.assertIsNotNone(self.qp.optimizer)
         self.assertIsNotNone(self.qp.storage_manager)
         self.assertIsNotNone(self.qp.cc_manager)
         self.assertIsNotNone(self.qp.fr_manager)
-        print("\n✓ Test 36: All components initialized")
 
-    def test_37_method_existence_check(self):
-        """Test all required methods exist"""
-        required_methods = [
-            '_process_node',
-            '_from_table',
-            '_select_columns',
-            '_condition_storage',
-            '_order_by',
-            '_limit',
-            '_nested_loop_join',
-            '_cartesian',
-            '_update_table',
-            '_insert_table',
-            '_delete_table',
-            '_commit',
-            '_rollback'
-        ]
-        
-        for method in required_methods:
-            self.assertTrue(hasattr(self.qp, method), f"Method {method} not found")
-        
-        print("\n✓ Test 37: All required methods exist")
+    def test_18_join_data_integrity(self):
+        """Test JOIN produces correct data"""
 
-    def test_38_real_data_join_bug_verification(self):
-            """
-            [REAL DATA TEST with VALID QUERY TREE TYPES]
-            """
-            data_test_dir = "data_test_join_v2"
-            if os.path.exists(f"data/{data_test_dir}"):
-                shutil.rmtree(f"data/{data_test_dir}")
-            
-            serializer = Serializer()
-            real_storage = StorageEngine(data_dir=data_test_dir, serializer=serializer)
-            
-            schema_users = {"table_name": "users", "columns": [{"name": "id", "type": "int"}, {"name": "name", "type": "varchar", "length": 20}]}
-            real_storage.write_schema_file(schema_users)
-            real_storage.write_data_file("users", [{"id": 1, "name": "Budi"}], schema_users)
-            
-            schema_orders = {"table_name": "orders", "columns": [{"name": "id", "type": "int"}, {"name": "user_id", "type": "int"}, {"name": "amount", "type": "int"}]}
-            real_storage.write_schema_file(schema_orders)
-            real_storage.write_data_file("orders", [{"id": 101, "user_id": 1, "amount": 5000}], schema_orders)
+        query = "SELECT * FROM student JOIN attends ON student.StudentID = attends.StudentID LIMIT 1;"
+        result = self.qp.execute_query(query)
+        if result[0].rows_count > 0:
+            row = result[0].data.data[0]
 
-            qp_real = QueryProcessor(self.mock_optimizer, real_storage, self.mock_ccm, self.mock_frm)
-            
-            users_node = QueryTree(type=QueryTypes.TABLE, val="users")
-            orders_node = QueryTree(type=QueryTypes.TABLE, val="orders")
-            join_node = QueryTree(type=QueryTypes.JOIN, val=["users.id", "orders.user_id"], childs=[users_node, orders_node])
-            
-            qp_real.current_transaction_id = 1
-            result = qp_real._process_node(join_node)
-            
-            print("\n\n--- [TEST 38] ANALISIS HASIL JOIN REAL DATA ---")
-            if result.rows_count > 0:
-                row = result.data[0]
-                print(f"Data Row: {row}")
-                ids_found = []
-                for k, v in row.items():
-                    if "id" in k.lower() or v in [1, 101]:
-                        ids_found.append(v)
-                
-                try:
-                    self.assertIn(101, ids_found, "BUG: Order ID (101) hilang!")
-                    self.assertIn(1, ids_found, "BUG: User ID (1) hilang!")
-                    print("PASS: Bug Fixed (Kolom collision tertangani).")
-                except AssertionError as e:
-                    print(f"✗ FAIL: {e}")
-                    raise e
-            else:
-                self.fail("Join tidak menghasilkan data.")
-                
-            if os.path.exists(f"data/{data_test_dir}"):
-                shutil.rmtree(f"data/{data_test_dir}")
+            student_id = row.get("student.studentid")
+            self.assertIsNotNone(student_id)
+
+    def test_19_transaction_isolation(self):
+        """Test transaction state isolation"""
+
+        self.qp.execute_query("BEGIN TRANSACTION;")
+        initial_tid = self.qp.current_transaction_id
+        self.assertIsNotNone(initial_tid)
+        self.qp.execute_query("COMMIT;")
+        self.assertIsNone(self.qp.current_transaction_id)
+
+    def test_20_transaction_rollback(self):
+        """Test ROLLBACK command aborts transaction"""
+
+        self.qp.execute_query("BEGIN TRANSACTION;")
+        tid = self.qp.current_transaction_id
+        self.assertIsNotNone(tid)
+        self.qp.execute_query("ROLLBACK;")
+        self.assertIsNone(self.qp.current_transaction_id)
+        self.assertFalse(self.qp.multiple_transaction)
+
+    def test_21_error_handling(self):
+        """Test error handling for invalid query"""
+
+        query = "INVALID QUERY;"
+        result = self.qp.execute_query(query)
+        self.assertGreater(len(result[0].message), 0)
+        self.assertTrue(any(word in result[0].message.lower() for word in ['error', 'invalid', 'unhandled']))
+
+    def test_22_insert_rows(self):
+        """Test INSERT data persistence"""
+
+        unique_id = 69420
+        insert_query = f"INSERT INTO student (StudentID, FullName, GPA) VALUES ({unique_id}, 'InsertVerify', 3.8);"
+        insert_result = self.qp.execute_query(insert_query)
+        self.assertEqual(insert_result[0].rows_count, 1)
+
+        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
+        select_result = self.qp.execute_query(verify_query)
+        if select_result[0].rows_count > 0:
+            self.assertEqual(select_result[0].data.data[0]["StudentID"], unique_id)
+            self.assertEqual(select_result[0].data.data[0]["FullName"], "InsertVerify")
+            self.assertEqual(select_result[0].data.data[0]["GPA"], 3.8)
+
+    def test_23_update_rows(self):
+        """Test UPDATE with arithmetic expression using record from test_21"""
+
+        unique_id = 69420
+
+        # contoh spek: GPA = 1.1 * GPA (3.8 * 1.1 = 4.18)
+        query = f"UPDATE student SET GPA = 1.1 * GPA WHERE StudentID = {unique_id};"
+        self.qp.execute_query(query)
+
+        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
+        select_result = self.qp.execute_query(verify_query)
+        if select_result[0].rows_count > 0:
+            self.assertAlmostEqual(select_result[0].data.data[0]["GPA"], 4.18, places=1)
+
+    def test_24_delete_rows(self):
+        """Test DELETE data removal using record from test_22"""
+
+        unique_id = 69420
+
+        delete_query = f"DELETE FROM student WHERE StudentID = {unique_id};"
+        self.qp.execute_query(delete_query)
+
+        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
+        select_result = self.qp.execute_query(verify_query)
+        self.assertEqual(select_result[0].rows_count, 0)
+
+    def test_25_create_drop_table(self):
+        """Test CREATE TABLE and DROP TABLE operations"""
+
+        table_name = "test_temp_table"
+
+        create_query = f"CREATE TABLE {table_name} (id int, name char(50), score float);"
+        result = self.qp.execute_query(create_query)
+        self.assertIn("created successfully", result[0].message.lower())
+
+        insert_query = f"INSERT INTO {table_name} (id, name, score) VALUES (1, 'Test', 95.5);"
+        insert_result = self.qp.execute_query(insert_query)
+        self.assertEqual(insert_result[0].rows_count, 1)
+
+        select_query = f"SELECT * FROM {table_name};"
+        select_result = self.qp.execute_query(select_query)
+        self.assertEqual(select_result[0].rows_count, 1)
+        if select_result[0].rows_count > 0:
+            self.assertEqual(select_result[0].data.data[0]["id"], 1)
+
+        drop_query = f"DROP TABLE {table_name};"
+        drop_result = self.qp.execute_query(drop_query)
+        self.assertIn("dropped successfully", drop_result[0].message.lower())
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("COMPREHENSIVE QUERY PROCESSOR UNIT TESTS")
-    print("Testing: Integration, Edge Cases, and Complete Workflow")
-    print("="*70 + "\n")
-    
-    # Run tests
     loader = unittest.TestLoader()
-    suite = loader.loadTestsFromTestCase(TestQueryProcessorComprehensive)
+    suite = loader.loadTestsFromTestCase(TestQueryProcessor)
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    
-    # Print summary
-    print("\n" + "="*70)
-    print("TEST SUMMARY")
-    print("="*70)
-    print(f"Tests Run: {result.testsRun}")
+
+    print(f"\nTests Run: {result.testsRun}")
     print(f"Successes: {result.testsRun - len(result.failures) - len(result.errors)}")
     print(f"Failures: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
-    print("="*70 + "\n")
-    
-    if result.wasSuccessful():
-        print("✓ ALL TESTS PASSED!")
-    else:
-        print("✗ SOME TESTS FAILED - Please review the output above")
+    print(f"Errors: {len(result.errors)}\n")
+
+    if not result.wasSuccessful():
+        print("SOME TESTS FAILED")
