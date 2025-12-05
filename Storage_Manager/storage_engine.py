@@ -453,6 +453,42 @@ class StorageEngine:
 
         return deleted_count
 
+    # DDL
+
+    def write_table(self, table_name: str, schema: dict) -> None:
+
+        schema_file = self._get_schema_path(table_name)
+        data_file = self._get_data_path(table_name)
+
+        if os.path.exists(schema_file) or os.path.exists(data_file):
+            raise FileExistsError(f"Table '{table_name}' already exists")
+
+        os.makedirs(os.path.dirname(schema_file), exist_ok=True)
+        schema_bytes = self.serializer.serialize_schema(schema)
+        with open(schema_file, "wb") as f:
+            f.write(schema_bytes)
+
+        empty_data = self.serializer.serialize_with_blocks([], schema)
+        with open(data_file, "wb") as f:
+            f.write(empty_data)
+
+    def delete_table(self, table_name: str) -> None:
+
+        schema_file = self._get_schema_path(table_name)
+        data_file = self._get_data_path(table_name)
+
+        if not os.path.exists(schema_file) and not os.path.exists(data_file):
+            raise FileNotFoundError(f"Table '{table_name}' does not exist")
+
+        if os.path.exists(schema_file):
+            os.remove(schema_file)
+        if os.path.exists(data_file):
+            os.remove(data_file)
+
+        index_pattern = f"{self.DATA_FOLDER}/{self.data_dir}/{table_name}_*_*.dat"
+        for index_file in glob.glob(index_pattern):
+            os.remove(index_file)
+            
     # indexing
 
     def set_index(self, table: str, column: str, index_type: IndexType) -> None:
