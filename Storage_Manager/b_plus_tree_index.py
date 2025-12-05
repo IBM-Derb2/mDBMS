@@ -1,5 +1,12 @@
 from typing import Union
 import pickle
+import os
+import sys
+
+if __name__ == "__main__":
+    from serializer import Serializer
+else:
+    from .serializer import Serializer
 
 class BPlusTreeNode:
     def __init__(self, order, leaf=False):
@@ -7,24 +14,50 @@ class BPlusTreeNode:
         self.leaf = leaf
         self.keys = []
         self.children = []
-        self.next = None  
-    
+        self.next = None
+
     def __getstate__(self):
         state = self.__dict__.copy()
         state["next"] = None
         return state
 
-class BPlusTreeIndex: 
+class BPlusTreeIndex:
     def __init__(self, order=5):
         self.root = BPlusTreeNode(order, leaf=True)
         self.order = order
     
-    def search(self, key): # returns none or value
+    def search(self, key):
         leaf = self._find_leaf(self.root, key)
-        for i, k in enumerate(leaf.keys):
-            if k == key:
-                return leaf.children[i]
-        return None
+        if not leaf or not leaf.keys:
+            return None
+        
+        results = []
+        
+        key_exists = any(k == key for k in leaf.keys)
+        if not key_exists:
+            return None
+        
+        start_leaf = self.root
+        while not start_leaf.leaf:
+            inserted = False
+            for i, k in enumerate(start_leaf.keys):
+                if key <= k:
+                    start_leaf = start_leaf.children[i]
+                    inserted = True
+                    break
+            if not inserted:
+                start_leaf = start_leaf.children[-1]
+        
+        current_leaf = start_leaf
+        while current_leaf:
+            for i, k in enumerate(current_leaf.keys):
+                if k == key:
+                    results.append(current_leaf.children[i])
+                elif k > key:
+                    return results if results else None
+            current_leaf = current_leaf.next
+        
+        return results if results else None
 
     def search_range(self, start_key, end_key): 
         results = []
@@ -53,17 +86,105 @@ class BPlusTreeIndex:
 
         if len(node.keys) > self.order - 1:
             self._split_leaf(node)
+    
+    def delete(self, key: str, value: int) -> None:
+        leaf = self._find_leaf(self.root, key)
+        if not leaf:
+            return
+
+        for i, (k, v) in enumerate(zip(leaf.keys, leaf.children)):
+            if k == key and v == value:
+                leaf.keys.pop(i)
+                leaf.children.pop(i)
+                break
 
     def save(self, filename):
         with open(filename, "wb") as f:
             pickle.dump(self.root, f)
+
+    def _rebuild_leaf_links(self, node=None):
+        if node is None:
+            node = self.root
+        
+        if node.leaf:
+            return [node]
+        
+        all_leaves = []
+        for child in node.children:
+            all_leaves.extend(self._rebuild_leaf_links(child))
+        
+        for i in range(len(all_leaves) - 1):
+            all_leaves[i].next = all_leaves[i + 1]
+        
+        return all_leaves
 
     @staticmethod
     def load(filename):
         with open(filename, "rb") as f:
             tree = BPlusTreeIndex()
             tree.root = pickle.load(f)
+            tree._rebuild_leaf_links()
             return tree
+
+    @staticmethod
+    def _get_original_column_name(schema: dict, column: str) -> str:
+        for col in schema['columns']:
+            if col['name'].lower() == column.lower():
+                return col['name']
+        return None
+
+    @staticmethod
+    def create(table: str, column: str, data_dir: str = "data", order: int = 5):
+        serializer = Serializer()
+
+        schema_file = os.path.join(data_dir, f"{table}_schema.dat")
+        data_file = os.path.join(data_dir, f"{table}.dat")
+        
+        hash_index_file = os.path.join(data_dir, f"{table}_{column}_hash.dat")
+        btree_index_file = os.path.join(data_dir, f"{table}_{column}_btree.dat")
+        index_file = btree_index_file
+
+        if not os.path.exists(schema_file):
+            raise FileNotFoundError(f"Table '{table}' does not exist (schema file not found)")
+
+        if not os.path.exists(data_file):
+            raise FileNotFoundError(f"Table '{table}' does not exist (data file not found)")
+
+        with open(schema_file, 'rb') as f:
+            schema = serializer.deserialize_schema(f.read())
+
+        if os.path.exists(hash_index_file):
+            raise FileExistsError(f"Hash index already exists for {table}.{column}")
+        if os.path.exists(btree_index_file):
+            raise FileExistsError(f"B+ tree index already exists for {table}.{column}")
+
+        original_col_name = BPlusTreeIndex._get_original_column_name(schema, column)
+        if original_col_name is None:
+            columns = [col['name'] for col in schema['columns']]
+            raise ValueError(f"Column '{column}' does not exist in table '{table}'. Available columns: {', '.join(columns)}")
+
+        btree_index = BPlusTreeIndex(order=order)
+
+        with open(data_file, 'rb') as f:
+            data = f.read()
+
+        rows = serializer.deserialize_with_blocks(data, schema['columns'])
+
+        for idx, row in enumerate(rows):
+            key_value = str(row.get(original_col_name, ''))
+            btree_index.insert(key_value, idx)
+
+        btree_index.save(index_file)
+        return index_file
+
+    @staticmethod
+    def drop(table: str, column: str, data_dir: str = "data"):
+        index_file = os.path.join(data_dir, f"{table}_{column}_btree.dat")
+
+        if not os.path.exists(index_file):
+            raise FileNotFoundError(f"B+ tree index does not exist for {table}.{column}")
+
+        os.remove(index_file)
 
     def _find_leaf(self, node, key) -> Union[BPlusTreeNode]: 
         if node.leaf:
@@ -141,3 +262,60 @@ class BPlusTreeIndex:
                     return parent
 
         return None
+
+
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: python b_plus_tree_index.py <create|drop> <column> <table>")
+        sys.exit(1)
+
+    action = sys.argv[1].lower()
+    column = sys.argv[2]
+    table = sys.argv[3]
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(os.path.dirname(script_dir), "data")
+
+    try:
+        if action == "create":
+            print(f"Creating B+ tree index for {table}.{column}...")
+            index_file = BPlusTreeIndex.create(table, column, data_dir, order=5)
+
+            serializer = Serializer()
+            schema_file = os.path.join(data_dir, f"{table}_schema.dat")
+            data_file = os.path.join(data_dir, f"{table}.dat")
+            with open(schema_file, 'rb') as f:
+                schema = serializer.deserialize_schema(f.read())
+            with open(data_file, 'rb') as f:
+                rows = serializer.deserialize_with_blocks(f.read(), schema['columns'])
+
+            print(f"B+ tree index created successfully at {index_file}")
+            print(f"Indexed {len(rows)} rows")
+
+        elif action == "drop":
+            BPlusTreeIndex.drop(table, column, data_dir)
+            print(f"B+ tree index dropped successfully for {table}.{column}")
+
+        else:
+            print(f"Error: Unknown action '{action}'. Use 'create' or 'drop'")
+            sys.exit(1)
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"Error: {e}")
+        serializer = Serializer()
+        schema_file = os.path.join(data_dir, f"{table}_schema.dat")
+        with open(schema_file, 'rb') as f:
+            schema = serializer.deserialize_schema(f.read())
+            columns = [col['name'].lower() for col in schema['columns']]
+        print(f"Available columns: {', '.join(columns)}")
+        sys.exit(1)
+    except FileExistsError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
