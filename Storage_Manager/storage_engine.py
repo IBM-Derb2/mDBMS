@@ -812,3 +812,92 @@ class StorageEngine:
             if k.lower() == column_lower:
                 return v if value_only else k
         return None
+    
+    def _update_indexes(self, table: str, operation: str, row_idx: int = None, row: dict = None,
+                        modified_columns: set = None, old_values: dict = None, deleted_indices: list = None) -> None:
+
+        if operation == "insert":
+            for col in modified_columns:
+                val = self._get_case_insensitive(row, col)
+                if val is None:
+                    continue
+
+                hash_file = self._get_index_path(table, col, "hash")
+                if os.path.exists(hash_file):
+                    idx = HashIndex()
+                    idx.load(hash_file)
+                    idx.insert(str(val), row_idx)
+                    idx.save(hash_file)
+
+                btree_file = self._get_index_path(table, col, "btree")
+                if os.path.exists(btree_file):
+                    idx = BPlusTreeIndex.load(btree_file)
+                    idx.insert(val, row_idx)
+                    idx.save(btree_file)
+
+        elif operation == "update":
+            for col in modified_columns:
+                old_val = old_values.get(col)
+                new_val = self._get_case_insensitive(row, col)
+
+                if old_val == new_val:
+                    continue
+
+                if old_val is not None:
+                    hash_file = self._get_index_path(table, col, "hash")
+                    if os.path.exists(hash_file):
+                        idx = HashIndex()
+                        idx.load(hash_file)
+                        idx.delete(str(old_val), row_idx)
+                        idx.save(hash_file)
+
+                    btree_file = self._get_index_path(table, col, "btree")
+                    if os.path.exists(btree_file):
+                        idx = BPlusTreeIndex.load(btree_file)
+                        idx.delete(str(old_val), row_idx)
+                        idx.save(btree_file)
+
+                if new_val is not None:
+                    hash_file = self._get_index_path(table, col, "hash")
+                    if os.path.exists(hash_file):
+                        idx = HashIndex()
+                        idx.load(hash_file)
+                        idx.insert(str(new_val), row_idx)
+                        idx.save(hash_file)
+
+                    btree_file = self._get_index_path(table, col, "btree")
+                    if os.path.exists(btree_file):
+                        idx = BPlusTreeIndex.load(btree_file)
+                        idx.insert(str(new_val), row_idx)
+                        idx.save(btree_file)
+
+        elif operation == "delete":
+            if not deleted_indices:
+                return
+
+            index_pattern = f"{self.DATA_FOLDER}/{self.data_dir}/{table}_*_*.dat"
+            for index_file in glob.glob(index_pattern):
+                basename = os.path.basename(index_file)
+                parts = basename.replace(".dat", "").split("_")
+                if len(parts) < 3:
+                    continue
+
+                col_name = parts[1]
+                index_type = parts[2]
+
+                if index_type == "hash":
+                    idx = HashIndex()
+                    idx.load(index_file)
+                    for idx_num, row_data in deleted_indices:
+                        val = row_data.get(col_name)
+                        if val is not None:
+                            idx.delete(str(val), idx_num)
+                    idx.save(index_file)
+
+                elif index_type == "btree":
+                    idx = BPlusTreeIndex.load(index_file)
+                    for idx_num, row_data in deleted_indices:
+                        val = row_data.get(col_name)
+                        if val is not None:
+                            idx.delete(str(val), idx_num)
+                    idx.save(index_file)
