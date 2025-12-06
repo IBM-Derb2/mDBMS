@@ -25,8 +25,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
 
         os.makedirs(cls.TEST_LOG_DIR, exist_ok=True)
 
+        test_data_dir = "failure_recovery"
         cls.serializer = Serializer()
-        cls.storage = StorageEngine(serializer=cls.serializer)
+        cls.storage = StorageEngine(data_dir=test_data_dir, serializer=cls.serializer)
 
         print("Setup: Complete\n")
     
@@ -95,11 +96,11 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.write_log_entry(tx_id, WalAction.START)
         
         # log INSERT
-        new_data = {"StudentID": 99, "FullName": "New_Student", "GPA": 3.8}
+        new_data = {"studentid": 99, "fullname": "New_Student", "gpa": 3.8}
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 99},
+            pk={"studentid": 99},
             old_data=None,
             new_data=new_data
         )
@@ -118,13 +119,13 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.write_log_entry(tx_id, WalAction.START)
         
         # Log UPDATE
-        old_data = {"StudentID": 1, "FullName": "Student_1", "GPA": 3.1}
-        new_data = {"StudentID": 1, "FullName": "Student_1", "GPA": 3.9}
+        old_data = {"studentid": 1, "fullname": "Student_1", "gpa": 3.1}
+        new_data = {"studentid": 1, "fullname": "Student_1", "gpa": 3.9}
         
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1},
+            pk={"studentid": 1},
             old_data=old_data,
             new_data=new_data
         )
@@ -140,12 +141,12 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.write_log_entry(tx_id, WalAction.START)
         
         # Log DELETE
-        old_data = {"StudentID": 5, "FullName": "Student_5", "GPA": 3.5}
+        old_data = {"studentid": 5, "fullname": "Student_5", "gpa": 3.5}
         
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 5},
+            pk={"studentid": 5},
             old_data=old_data,
             new_data=None
         )
@@ -157,18 +158,18 @@ class TestFailureRecoveryManager(unittest.TestCase):
         """Test buffer manager integration with FRM"""
 
         # read from buffer (cache miss, loads from disk)
-        pk_value = {"StudentID": 1}
+        pk_value = {"studentid": 1}
         row = self.buffer_manager.read_block("student", pk_value)
         
         self.assertIsNotNone(row)
-        self.assertEqual(row.data["StudentID"], 1)
+        self.assertEqual(row.data["studentid"], 1)
         self.assertFalse(row.is_dirty)
         
         # write to buffer (marks dirty)
         tx_id = 601
         self.frm.notify_transaction_start(tx_id)
         
-        new_data = {"StudentID": 1, "FullName": "Updated_Student", "GPA": 4.0}
+        new_data = {"studentid": 1, "fullname": "Updated_Student", "gpa": 4.0}
         self.buffer_manager.write_block(tx_id, "student", pk_value, new_data)
         
         # check dirty flag
@@ -183,8 +184,8 @@ class TestFailureRecoveryManager(unittest.TestCase):
 
         # write to multiple entries
         for i in range(1, 4):
-            pk = {"StudentID": i}
-            new_data = {"StudentID": i, "FullName": f"Flushed_{i}", "GPA": 3.5}
+            pk = {"studentid": i}
+            new_data = {"studentid": i, "fullname": f"Flushed_{i}", "gpa": 3.5}
             self.buffer_manager.write_block(701 + i, "student", pk, new_data)
         
         # flush
@@ -212,11 +213,11 @@ class TestFailureRecoveryManager(unittest.TestCase):
             self.frm.write_log_entry(tx_id, WalAction.START)
             
             # Perform operations
-            new_data = {"StudentID": tx_id, "FullName": f"TX_{tx_id}", "GPA": 3.5}
+            new_data = {"studentid": tx_id, "fullname": f"TX_{tx_id}", "gpa": 3.5}
             self.frm.log_write(
                 tx_id=tx_id,
                 table="student",
-                pk={"StudentID": tx_id},
+                pk={"studentid": tx_id},
                 old_data=None,
                 new_data=new_data
             )
@@ -247,9 +248,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 901},
+            pk={"studentid": 901},
             old_data=None,
-            new_data={"StudentID": 901, "FullName": "Before_CP", "GPA": 3.5}
+            new_data={"studentid": 901, "fullname": "Before_CP", "gpa": 3.5}
         )
         
         self.frm.save_checkpoint([tx_id])
@@ -257,9 +258,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 901},
-            old_data={"StudentID": 901, "FullName": "Before_CP", "GPA": 3.5},
-            new_data={"StudentID": 901, "FullName": "After_CP", "GPA": 3.9}
+            pk={"studentid": 901},
+            old_data={"studentid": 901, "fullname": "Before_CP", "gpa": 3.5},
+            new_data={"studentid": 901, "fullname": "After_CP", "gpa": 3.9}
         )
         
         # commit
@@ -278,9 +279,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1001},
+            pk={"studentid": 1001},
             old_data=None,
-            new_data={"StudentID": 1001, "FullName": "Abort_Test", "GPA": 3.5}
+            new_data={"studentid": 1001, "fullname": "Abort_Test", "gpa": 3.5}
         )
         
         # ABORT
@@ -300,26 +301,26 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1101},
+            pk={"studentid": 1101},
             old_data=None,
-            new_data={"StudentID": 1101, "FullName": "Insert_Test", "GPA": 3.5}
+            new_data={"studentid": 1101, "fullname": "Insert_Test", "gpa": 3.5}
         )
         
         # UPDATE
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1101},
-            old_data={"StudentID": 1101, "FullName": "Insert_Test", "GPA": 3.5},
-            new_data={"StudentID": 1101, "FullName": "Update_Test", "GPA": 3.8}
+            pk={"studentid": 1101},
+            old_data={"studentid": 1101, "fullname": "Insert_Test", "gpa": 3.5},
+            new_data={"studentid": 1101, "fullname": "Update_Test", "gpa": 3.8}
         )
         
         # DELETE another record
         self.frm.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1},
-            old_data={"StudentID": 1, "FullName": "Student_1", "GPA": 3.1},
+            pk={"studentid": 1},
+            old_data={"studentid": 1, "fullname": "Student_1", "gpa": 3.1},
             new_data=None
         )
         
@@ -352,9 +353,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         frm_test.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1201},
+            pk={"studentid": 1201},
             old_data=None,
-            new_data={"StudentID": 1201, "FullName": "Committed", "GPA": 3.8}
+            new_data={"studentid": 1201, "fullname": "Committed", "gpa": 3.8}
         )
         
         frm_test.write_log_entry(tx_id, WalAction.COMMIT)
@@ -391,9 +392,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         frm_test.log_write(
             tx_id=tx_id,
             table="student",
-            pk={"StudentID": 1301},
+            pk={"studentid": 1301},
             old_data=None,
-            new_data={"StudentID": 1301, "FullName": "Incomplete", "GPA": 3.5}
+            new_data={"studentid": 1301, "fullname": "Incomplete", "gpa": 3.5}
         )
         
         # NO COMMIT, simulate crash
@@ -423,8 +424,8 @@ class TestFailureRecoveryManager(unittest.TestCase):
         tx1 = 1401
         frm_test.notify_transaction_start(tx1)
         frm_test.write_log_entry(tx1, WalAction.START)
-        frm_test.log_write(tx1, "student", {"StudentID": 1401}, None,
-                          {"StudentID": 1401, "FullName": "Before_CP", "GPA": 3.5})
+        frm_test.log_write(tx1, "student", {"studentid": 1401}, None,
+                          {"studentid": 1401, "fullname": "Before_CP", "gpa": 3.5})
         frm_test.write_log_entry(tx1, WalAction.COMMIT)
         frm_test.notify_transaction_end(tx1)
         
@@ -432,16 +433,16 @@ class TestFailureRecoveryManager(unittest.TestCase):
         tx2 = 1402
         frm_test.notify_transaction_start(tx2)
         frm_test.write_log_entry(tx2, WalAction.START)
-        frm_test.log_write(tx2, "student", {"StudentID": 1402}, None,
-                          {"StudentID": 1402, "FullName": "Ongoing", "GPA": 3.5})
+        frm_test.log_write(tx2, "student", {"studentid": 1402}, None,
+                          {"studentid": 1402, "fullname": "Ongoing", "gpa": 3.5})
         
         # CHECKPOINT
         frm_test.save_checkpoint([tx2])
         
         # TX 2: Continue after checkpoint and commit
-        frm_test.log_write(tx2, "student", {"StudentID": 1402},
-                          {"StudentID": 1402, "FullName": "Ongoing", "GPA": 3.5},
-                          {"StudentID": 1402, "FullName": "After_CP", "GPA": 3.9})
+        frm_test.log_write(tx2, "student", {"studentid": 1402},
+                          {"studentid": 1402, "fullname": "Ongoing", "gpa": 3.5},
+                          {"studentid": 1402, "fullname": "After_CP", "gpa": 3.9})
         frm_test.write_log_entry(tx2, WalAction.COMMIT)
         frm_test.notify_transaction_end(tx2)
         
@@ -449,8 +450,8 @@ class TestFailureRecoveryManager(unittest.TestCase):
         tx3 = 1403
         frm_test.notify_transaction_start(tx3)
         frm_test.write_log_entry(tx3, WalAction.START)
-        frm_test.log_write(tx3, "student", {"StudentID": 1403}, None,
-                          {"StudentID": 1403, "FullName": "Crash", "GPA": 3.5})
+        frm_test.log_write(tx3, "student", {"studentid": 1403}, None,
+                          {"studentid": 1403, "fullname": "Crash", "gpa": 3.5})
         
         # Simulate crash, no commit for tx3
         
@@ -473,9 +474,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx1,
             table="student",
-            pk={"StudentID": 1501},
+            pk={"studentid": 1501},
             old_data=None,
-            new_data={"StudentID": 1501, "FullName": "Workflow_Test", "GPA": 3.5}
+            new_data={"studentid": 1501, "fullname": "Workflow_Test", "gpa": 3.5}
         )
         
         self.frm.write_log_entry(tx1, WalAction.COMMIT)
@@ -489,9 +490,9 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx2,
             table="student",
-            pk={"StudentID": 1501},
-            old_data={"StudentID": 1501, "FullName": "Workflow_Test", "GPA": 3.5},
-            new_data={"StudentID": 1501, "FullName": "Updated_Workflow", "GPA": 3.9}
+            pk={"studentid": 1501},
+            old_data={"studentid": 1501, "fullname": "Workflow_Test", "gpa": 3.5},
+            new_data={"studentid": 1501, "fullname": "Updated_Workflow", "gpa": 3.9}
         )
         
         self.frm.write_log_entry(tx2, WalAction.COMMIT)
@@ -505,8 +506,8 @@ class TestFailureRecoveryManager(unittest.TestCase):
         self.frm.log_write(
             tx_id=tx3,
             table="student",
-            pk={"StudentID": 1501},
-            old_data={"StudentID": 1501, "FullName": "Updated_Workflow", "GPA": 3.9},
+            pk={"studentid": 1501},
+            old_data={"studentid": 1501, "fullname": "Updated_Workflow", "gpa": 3.9},
             new_data=None
         )
         
@@ -520,22 +521,22 @@ class TestFailureRecoveryManager(unittest.TestCase):
         tx1 = 1601
         self.frm.notify_transaction_start(tx1)
         self.frm.write_log_entry(tx1, WalAction.START)
-        self.frm.log_write(tx1, "student", {"StudentID": 1601}, None,
-                          {"StudentID": 1601, "FullName": "TX1_Commit", "GPA": 3.5})
+        self.frm.log_write(tx1, "student", {"studentid": 1601}, None,
+                          {"studentid": 1601, "fullname": "TX1_Commit", "gpa": 3.5})
         
         # TX 2: Will abort
         tx2 = 1602
         self.frm.notify_transaction_start(tx2)
         self.frm.write_log_entry(tx2, WalAction.START)
-        self.frm.log_write(tx2, "student", {"StudentID": 1602}, None,
-                          {"StudentID": 1602, "FullName": "TX2_Abort", "GPA": 3.5})
+        self.frm.log_write(tx2, "student", {"studentid": 1602}, None,
+                          {"studentid": 1602, "fullname": "TX2_Abort", "gpa": 3.5})
         
         # TX 3: Will crash (no commit/abort)
         tx3 = 1603
         self.frm.notify_transaction_start(tx3)
         self.frm.write_log_entry(tx3, WalAction.START)
-        self.frm.log_write(tx3, "student", {"StudentID": 1603}, None,
-                          {"StudentID": 1603, "FullName": "TX3_Crash", "GPA": 3.5})
+        self.frm.log_write(tx3, "student", {"studentid": 1603}, None,
+                          {"studentid": 1603, "fullname": "TX3_Crash", "gpa": 3.5})
         
         # Commit TX1
         self.frm.write_log_entry(tx1, WalAction.COMMIT)
