@@ -66,7 +66,7 @@ class SQLTokenizer:
         # QueryTypes.DATA_TYPE or appropriate constraint nodes while building column definitions. They
         # are included as strings so they become KEYWORD tokens and the parsing code can easily detect
         # types and modifiers using _match_keyword('INT'), _match_keyword('NULL'), etc.
-        'INT', 'FLOAT', 'CHAR',
+        'INT', 'FLOAT', 'CHAR', 'VARCHAR',
         'NULL', 'DEFAULT', 'UNIQUE', 'CHECK', 'CASCADE', 'RESTRICT'
     }
 

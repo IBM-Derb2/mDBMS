@@ -113,9 +113,9 @@ class DDLParser(BaseParser):
                 col_name = self.current_token.value
                 self._advance()
 
-                if not self._match_keyword('INT') and not self._match_keyword('FLOAT') and \
-                   not self._match_keyword('CHAR') and not self._match_keyword('VARCHAR'):
-
+                # Check for data type
+                if not (self._match_keyword('INT') or self._match_keyword('FLOAT') or
+                        self._match_keyword('CHAR') or self._match_keyword('VARCHAR')):
                     raise ValueError(
                         f"Expected data type (INT, FLOAT, CHAR, or VARCHAR) after column '{col_name}', got '{self.current_token.value}'")
 
