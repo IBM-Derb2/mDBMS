@@ -47,7 +47,10 @@ class FailureRecoveryManager:
         """Get row from buffer if exists"""
         key = self.buffer_manager._get_buffer_key(table_name, pk_value)
         if key in self.buffer_manager.buffer_data:
-            return self.buffer_manager.buffer_data[key].data
+            buffered_row = self.buffer_manager.buffer_data[key]
+            if buffered_row.is_deleted:
+                return None
+            return buffered_row.data
         return None
 
     def start(self):

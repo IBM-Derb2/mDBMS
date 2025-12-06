@@ -221,9 +221,15 @@ class BufferManager:
         print(f"[Buffer] Flush complete. Tables: {list(dirty_table_names)}")
         
         self.tables = []
+        deleted_keys = [key for key, row in self.buffer_data.items() if row.is_deleted]
+        for key in deleted_keys:
+            self.buffer_data.pop(key)
+            if key in self.lru_order:
+                self.lru_order.remove(key)
+
         for row in self.buffer_data.values():
             row.is_dirty = False
-        print(f"[Buffer] {len(self.buffer_data)} blocks remain cached")
+        print(f"[Buffer] Flushed. Removed {len(deleted_keys)} deleted rows. {len(self.buffer_data)} blocks remain cached")
     
     def clear_buffer(self):
         self.buffer_data.clear()
