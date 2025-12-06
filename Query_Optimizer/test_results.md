@@ -1,12 +1,30 @@
 # Query Optimizer Unit Test Results
 
-Test run date: 2025-11-20 20:45:23
+Test run date: 2025-12-04 19:55:08
 
 ---
 
-## CostCalculatorTests.test_internal_get_cost_rejects_raw_query_strings
+## CostCalculatorTests.test_calculate_node_cost_uses_statistics
 
-**Description:** Test Internal Get Cost Rejects Raw Query Strings
+**Description:** Test Calculate Node Cost Uses Statistics
+
+**Goal:** Verify the behavior of CostCalculatorTests
+
+**Method:** Unit test
+
+**Success Criterion:** Test passes without assertion errors
+
+**Input:** {'query': 'SELECT * FROM users WHERE id = 1'}
+
+**Expected Output:** {'total_cost': 82000}
+
+**Results:** Pass
+
+---
+
+## CostCalculatorTests.test_get_cost_accepts_query_strings
+
+**Description:** Test Get Cost Accepts Query Strings
 
 **Goal:** Verify the behavior of CostCalculatorTests
 
@@ -16,15 +34,15 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': 'SELECT * FROM users'}
 
-**Expected Output:** {'error': 'TypeError'}
+**Expected Output:** {'cost': 70000}
 
 **Results:** Pass
 
 ---
 
-## DistributionRuleTests.test_distribution_rule_apply_preserves_join_structure
+## DistributionRuleTests.test_distribution_rule_structure
 
-**Description:** Test Distribution Rule Apply Preserves Join Structure
+**Description:** Test Distribution Rule Structure
 
 **Goal:** Verify the behavior of DistributionRuleTests
 
@@ -34,15 +52,15 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'"}
 
-**Expected Output:** {'join_count': 1, 'root_type': 'SELECT'}
+**Expected Output:** {'theta_join_count': 1}
 
 **Results:** Pass
 
 ---
 
-## DistributionRuleTests.test_distribution_rule_detects_selection_over_join
+## DistributionRuleTests.test_distribution_rule_with_theta_join
 
-**Description:** Test Distribution Rule Detects Selection Over Join
+**Description:** Test Distribution Rule With Theta Join
 
 **Goal:** Verify the behavior of DistributionRuleTests
 
@@ -52,7 +70,7 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'"}
 
-**Expected Output:** {'can_apply': True}
+**Expected Output:** {'can_apply': False}
 
 **Results:** Pass
 
@@ -76,9 +94,9 @@ Test run date: 2025-11-20 20:45:23
 
 ---
 
-## InternalParseQueryTests.test_parse_select_creates_where_branch
+## InternalParseQueryTests.test_parse_select_creates_selection_stmt
 
-**Description:** Test Parse Select Creates Where Branch
+**Description:** Test Parse Select Creates Selection Stmt
 
 **Goal:** Verify the behavior of InternalParseQueryTests
 
@@ -88,15 +106,15 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': 'SELECT * FROM users WHERE id = 10'}
 
-**Expected Output:** {'where_count': 1}
+**Expected Output:** {'selection_count': 1}
 
 **Results:** Pass
 
 ---
 
-## OptimizationEngineTests.test_optimize_query_converts_cartesian_product_to_join
+## OptimizationEngineTests.test_optimize_query_handles_cartesian_product
 
-**Description:** Test Optimize Query Converts Cartesian Product To Join
+**Description:** Test Optimize Query Handles Cartesian Product
 
 **Goal:** Verify the behavior of OptimizationEngineTests
 
@@ -106,7 +124,7 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': 'SELECT * FROM users u, orders o WHERE u.id = o.user_id'}
 
-**Expected Output:** {'join_count': 1, 'from_child_type': 'JOIN'}
+**Expected Output:** {'theta_joins': 0, 'cross_joins': 1}
 
 **Results:** Pass
 
@@ -202,9 +220,9 @@ Test run date: 2025-11-20 20:45:23
 
 ---
 
-## SelectionRuleTests.test_selection_rule_converts_cartesian_product_into_join
+## SelectionRuleTests.test_selection_rule_structure
 
-**Description:** Test Selection Rule Converts Cartesian Product Into Join
+**Description:** Test Selection Rule Structure
 
 **Goal:** Verify the behavior of SelectionRuleTests
 
@@ -214,15 +232,15 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': 'SELECT * FROM users u, orders o WHERE u.id = o.user_id'}
 
-**Expected Output:** {'join_count': 1, 'from_child_type': 'JOIN'}
+**Expected Output:** {'cross_joins': 1, 'theta_joins': 0}
 
 **Results:** Pass
 
 ---
 
-## SelectionRuleTests.test_selection_rule_detects_applicability
+## SelectionRuleTests.test_selection_rule_with_cross_join
 
-**Description:** Test Selection Rule Detects Applicability
+**Description:** Test Selection Rule With Cross Join
 
 **Goal:** Verify the behavior of SelectionRuleTests
 
@@ -232,7 +250,7 @@ Test run date: 2025-11-20 20:45:23
 
 **Input:** {'query': 'SELECT * FROM users u, orders o WHERE u.id = o.user_id'}
 
-**Expected Output:** {'can_apply': True}
+**Expected Output:** {'can_apply': False}
 
 **Results:** Pass
 

@@ -1,8 +1,3 @@
-"""
-Expression Parser
-Handles parsing of SQL expressions including arithmetic, comparisons, and logical operators.
-"""
-
 from globalsy.classes.query_tree import QueryTree
 from globalsy.constants.query_types import QueryTypes
 from globalsy.constants.query_operators import QueryOperators
@@ -10,14 +5,11 @@ from .base_parser import BaseParser
 
 
 class ExpressionParser(BaseParser):
-    """Handles parsing of SQL expressions"""
 
     def parse_expression(self) -> QueryTree:
-        """Parse an expression (supports AND, OR, comparisons, arithmetic)"""
         return self._parse_or_expression()
 
     def _parse_or_expression(self) -> QueryTree:
-        """Parse OR expression"""
         left = self._parse_and_expression()
 
         while self._match_keyword(QueryOperators.OR):
@@ -29,7 +21,6 @@ class ExpressionParser(BaseParser):
         return left
 
     def _parse_and_expression(self) -> QueryTree:
-        """Parse AND expression"""
         left = self._parse_not_expression()
 
         while self._match_keyword(QueryOperators.AND):
@@ -41,7 +32,6 @@ class ExpressionParser(BaseParser):
         return left
 
     def _parse_not_expression(self) -> QueryTree:
-        """Parse NOT expression"""
         if self._match_keyword(QueryOperators.NOT):
             self._advance()
             operand = self._parse_comparison_expression()
@@ -50,10 +40,9 @@ class ExpressionParser(BaseParser):
             return self._parse_comparison_expression()
 
     def _parse_comparison_expression(self) -> QueryTree:
-        """Parse comparison expression"""
         left = self._parse_additive_expression()
 
-        # Check for comparison operators
+        # comparison operator
         if self._match_operator(QueryOperators.EQ) or self._match_operator(QueryOperators.ALT_NEQ) or \
            self._match_operator(QueryOperators.NEQ) or self._match_operator(QueryOperators.LT) or \
            self._match_operator(QueryOperators.LTE) or self._match_operator(QueryOperators.GT) or \
@@ -63,20 +52,20 @@ class ExpressionParser(BaseParser):
             right = self._parse_additive_expression()
             return QueryTree(type=QueryTypes.OPERATOR, val=op, childs=[left, right])
 
-        # Handle LIKE operator
+        # LIKE operator
         if self._match_keyword(QueryOperators.LIKE):
             self._advance()
             right = self._parse_additive_expression()
             return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.LIKE, childs=[left, right])
 
-        # Handle IN operator
+        # IN operator
         if self._match_keyword(QueryOperators.IN):
             self._advance()
             if not self._match_punctuation('('):
                 raise ValueError("Expected '(' after IN")
             self._advance()
 
-            # Parse value list
+            # parse value list
             values = []
             while True:
                 value = self._parse_additive_expression()
@@ -93,7 +82,7 @@ class ExpressionParser(BaseParser):
 
             return QueryTree(type=QueryTypes.OPERATOR, val=QueryOperators.IN, childs=[left] + values)
 
-        # Handle BETWEEN operator
+        # BETWEEN operator
         if self._match_keyword(QueryOperators.BETWEEN):
             self._advance()
             lower = self._parse_additive_expression()
@@ -106,7 +95,6 @@ class ExpressionParser(BaseParser):
         return left
 
     def _parse_additive_expression(self) -> QueryTree:
-        """Parse addition/subtraction"""
         left = self._parse_multiplicative_expression()
 
         while self._match_operator(QueryOperators.PLUS) or self._match_operator(QueryOperators.MINUS):
@@ -119,7 +107,6 @@ class ExpressionParser(BaseParser):
         return left
 
     def _parse_multiplicative_expression(self) -> QueryTree:
-        """Parse multiplication/division"""
         left = self._parse_primary_expression()
 
         while self._match_operator(QueryOperators.MULTIPLY) or self._match_operator(QueryOperators.DIVIDE) or self._match_operator(QueryOperators.MODULO):
@@ -132,7 +119,7 @@ class ExpressionParser(BaseParser):
         return left
 
     def _parse_primary_expression(self) -> QueryTree:
-        """Parse primary expression (identifier, number, string, parentheses, unary minus)"""
+
         # Unary minus (negative numbers)
         if self._match_operator(QueryOperators.MINUS):
             self._advance()
@@ -150,20 +137,25 @@ class ExpressionParser(BaseParser):
         if self.current_token.type == 'STRING':
             val = self.current_token.value
             self._advance()
-            return QueryTree(type=QueryTypes.LITERAL, val=f"'{val}'")
+            return QueryTree(type=QueryTypes.LITERAL, val=val)
 
         # Number literal
         if self.current_token.type == 'NUMBER':
             val = self.current_token.value
             self._advance()
+            # konversi ke int atau float
+            if '.' in val:
+                val = float(val)
+            else:
+                val = int(val)
             return QueryTree(type=QueryTypes.LITERAL, val=val)
 
-        # Identifier (column reference, possibly with table prefix)
+        # identifier (column atau table.column)
         if self.current_token.type == 'IDENTIFIER' or self.current_token.value == '*':
             identifier = self.current_token.value
             self._advance()
 
-            # Check for table.column syntax
+            # cek table.column syntax
             if self._match_punctuation('.'):
                 self._advance()
                 if self.current_token.type not in ('IDENTIFIER', 'KEYWORD') and self.current_token.value != '*':
