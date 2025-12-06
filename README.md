@@ -21,11 +21,153 @@
 
 This project is a mini Database Management System (DBMS) implemented with Python with the following functionalities:
 
-1. Query Processing: SELECT FROM, UPDATE, JOIN ON, NATURAL JOIN, WHERE
-2. Query Optimization
-3. Storage Management
-4. Failure Recovery
-5. Concurrency Control
+## 1. Query Processor
+
+Query processor is the component responsible for handling query execution. It must be able to interact and coordinate with other components for queries to be executed properly. The Query Processor handles 5 types of queries:
+
+- **Transaction Control**: `BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`
+- **Concurrency Control**: `SET CONCURRENCY` (lock-based, timestamp-based, validation-based, multi-version)
+- **Standard Queries**: `SELECT`, `UPDATE`, `DELETE`, `INSERT`, `CREATE TABLE`, `DROP TABLE`
+- **Query Clauses**: `FROM`, `JOIN`, `WHERE`, `ORDER BY`, `LIMIT`, `AS`
+
+The `execute_query()` method is the main method that receives a query from the user and returns an ExecutionResult object containing the requested data or a message. It transforms queries into tree structures using the query optimizer's `parse_query()` and `optimize_query()` methods, then processes each node recursively.
+
+## 2. Query Optimizer
+
+Query optimizer performs parsing, optimization, and cost calculation for query execution:
+
+### Parse Query
+
+Transforms SQL query strings into structured `ParsedQuery` objects through:
+
+- **Tokenization**: Breaking SQL strings into tokens (lexical analysis)
+- **Parsing**: Analyzing tokens to determine parser type (syntax analysis)
+  - `DDLParser`: CREATE, DROP, BEGIN, COMMIT
+  - `DMLParser`: SELECT, INSERT, UPDATE, DELETE
+  - `ExpressionParser`: WHERE, arithmetic, logical expressions
+
+### Optimize Query
+
+Implements **Rule-Based Optimization** using relational algebra rules iteratively until convergence:
+
+1. **DistributionRule (Priority 1)**: Push operations down
+
+   - **Selection Pushdown**: Move WHERE conditions closer to source tables
+   - **Projection Pushdown**: Only retrieve necessary columns
+
+2. **SelectionRule (Priority 2)**: Optimize selections
+
+   - Convert Cartesian Product + WHERE to Theta Join
+   - Decompose conjunctive selections (AND conditions)
+   - Reorder selections by selectivity
+
+3. **ProjectionRule (Priority 3)**: Eliminate redundant projections
+
+   - Reduce processed columns to save memory and I/O
+
+4. **JoinRule (Priority 4)**: Optimize join order
+   - Join smallest tables first to minimize intermediate results
+
+### Get Cost
+
+The `calculate_cost()` method implements recursive tree traversal to estimate query execution costs by mapping each node type to appropriate cost formulas using statistics from Storage Manager.
+
+**Implementation Limitation**: Data types are limited to INT, FLOAT, CHAR, and VARCHAR.
+
+## 3. Concurrency Control Manager
+
+Manages query scheduling and transaction concurrency to ensure correct and consistent execution when transactions run concurrently.
+
+### Key Methods
+
+- `begin_transaction()`: Generate unique transaction ID with format `{ip}:{port}-{timestamp}-{counter}`
+- `log_object()`: Record objects in transactions for lock/timestamp assignment
+- `validate_object()`: Validate if an object is allowed to perform specific actions
+- `commit_transaction()`: Commit transaction and make all changes permanent
+- `abort_transaction()`: Cancel transaction and perform rollback via Failure Recovery Manager
+- `set_concurrency_mechanism()`: Switch between concurrency control strategies
+
+### Concurrency Strategies
+
+1. **Lock-Based Strategy**: Uses Shared/Exclusive locks with Two-Phase Locking (2PL)
+
+   - Deadlock prevention: Wound-Wait or Wait-Die schemes
+   - Timeout mechanism: 5 seconds
+
+2. **Timestamp-Based Strategy**: Uses timestamp ordering to serialize transactions
+
+   - Aborts transactions that violate timestamp order
+
+3. **Validation-Based Strategy**: Optimistic Concurrency Control (OCC)
+
+   - Validates conflicts at commit time
+
+4. **Multi-Version Strategy**: MVCC with snapshot isolation
+   - Each transaction sees consistent snapshot
+   - First-committer-wins for writes
+
+### ACID Properties
+
+- **Atomicity**: WAL integration with FRM for all-or-nothing transactions
+- **Consistency**: State transition validation and unique transaction IDs
+- **Isolation**: Strategy-specific isolation (Serializability or Snapshot Isolation)
+- **Durability**: Write-Ahead Logging and checkpoints for crash recovery
+
+### Deadlock Management
+
+- **Detection**: Wait-For Graph with DFS cycle detection
+- **Resolution**: Youngest transaction selected as victim
+- **Prevention**: Wound-Wait, Wait-Die schemes, and timeout mechanism
+
+## 4. Storage Manager
+
+Manages physical data storage operations and provides services to other components.
+
+### Architecture
+
+- **StorageEngine**: Handles block read/write, deletion, indexing, and table statistics
+- **Serializer**: Converts data between Python format and binary (1024-byte blocks)
+- **Indexing**: HashIndex and BPlusTreeIndex for fast data access
+
+### Operations
+
+**Read Block**:
+
+- Index-based reading using HashIndex/BPlusTreeIndex for optimized access
+- Full table scan with deserialization when index unavailable
+- Combines disk data with buffer from FRM for transaction visibility
+- Applies WHERE conditions and column projections
+
+**Write Block**:
+
+- **INSERT**: Validates primary key uniqueness, writes to buffer via BufferManager
+- **UPDATE**: Combines disk and buffer data, evaluates expressions, updates via buffer
+- Follows write-ahead logging mechanism
+
+**Delete Block**:
+
+- Reads from disk and buffer, marks matching rows as deleted in buffer
+- Supports transaction rollback through FRM undo mechanism
+
+**Indexing**:
+
+- `set_index()`: Builds HashIndex or BPlusTreeIndex on specified columns
+- Persistent storage allows reloading for optimized queries
+
+**Table Statistics**: Provides metadata for query optimization cost calculations
+
+## 5. Failure Recovery
+
+Ensures database consistency and durability through crash recovery and transaction rollback:
+
+- **Write-Ahead Logging (WAL)**: All operations logged before execution
+- **Buffer Manager**: Manages in-memory buffer pool with WAL rules
+- **Checkpoint**: Saves system state with active transaction list
+- **Recovery**:
+  - REDO committed transactions
+  - UNDO uncommitted transactions
+  - Restore consistent state after crash
+- **Rollback**: Uses undo logs to revert transaction changes
 
 ---
 
