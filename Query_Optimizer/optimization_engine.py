@@ -65,6 +65,12 @@ class OptimizationEngine:
         if not isinstance(parsed_query, ParsedQuery):
             raise TypeError("optimize_query requires a ParsedQuery instance")
 
+        # Debug: Show statistics manager state
+        print(
+            f"[QO] Using StatisticsManager instance {self.statistics_manager.instance_id}")
+        print(
+            f"[QO] Statistics cache contains: {list(self.statistics_manager.tables.keys())}")
+
         # Calculate cost before optimization
         cost_before, rows_before = self.statistics_manager.calculate_cost(
             parsed_query.query_tree)

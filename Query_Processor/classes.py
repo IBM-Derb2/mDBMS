@@ -21,12 +21,15 @@ class ClientSession:
     result_storage: List = None
     query_storage: List = None
     transaction_failed: bool = False
+    modified_tables: set = None  # Track tables modified in this transaction
 
     def __post_init__(self):
         if self.result_storage is None:
             self.result_storage = []
         if self.query_storage is None:
             self.query_storage = []
+        if self.modified_tables is None:
+            self.modified_tables = set()
 
 
 @dataclass
@@ -61,6 +64,7 @@ class QueryProcessor:
         self.result_storage = []
         self.query_storage = []
         self.transaction_failed = False
+        self.modified_tables = set()  # Track tables modified in this transaction
 
     def _get_client_session(self, client_address: tuple = None) -> ClientSession:
         if not client_address:
@@ -443,34 +447,23 @@ class QueryProcessor:
     def _commit(self, session: ClientSession = None) -> None:
         current_transaction_id = session.current_transaction_id if session else self.current_transaction_id
 
-        # Track modified tables during transaction for statistics refresh
-        modified_tables = set()
-        query_storage = session.query_storage if session else self.query_storage
-
-        for stored_query in query_storage:
-            # Extract table names from queries
-            query_upper = stored_query.upper()
-            if any(keyword in query_upper for keyword in ['INSERT INTO', 'UPDATE', 'DELETE FROM', 'CREATE TABLE', 'DROP TABLE']):
-                # Simple regex to extract table name after these keywords
-                import re
-                table_match = re.search(
-                    r'(?:INSERT INTO|UPDATE|DELETE FROM|CREATE TABLE|DROP TABLE)\s+(\w+)', query_upper)
-                if table_match:
-                    modified_tables.add(table_match.group(1).lower())
-
         if current_transaction_id is not None:
-            self.cc_manager.commit_transaction(current_transaction_id)
-            self._reset_transaction_state(session)
+            # Get modified tables before resetting state
+            modified_tables = session.modified_tables if session else self.modified_tables
 
-            # Refresh statistics for all modified tables after commit
+            # Commit transaction (this triggers checkpoint and buffer flush)
+            self.cc_manager.commit_transaction(current_transaction_id)
+
+            # NOW refresh statistics AFTER buffer has been flushed to disk
             if modified_tables and hasattr(self.optimizer, 'statistics_manager'):
+                print(
+                    f"[QP] Refreshing stats for {len(modified_tables)} modified tables after COMMIT")
                 for table_name in modified_tables:
-                    try:
-                        self.optimizer.statistics_manager.refresh_table_stats(
-                            table_name)
-                    except Exception as e:
-                        print(
-                            f"[QP] Warning: Failed to refresh stats for '{table_name}': {e}")
+                    print(f"[QP] Post-commit refresh for table '{table_name}'")
+                    self.optimizer.statistics_manager.refresh_table_stats(
+                        table_name)
+
+            self._reset_transaction_state(session)
 
     def _rollback(self, session: ClientSession = None) -> None:
         current_transaction_id = session.current_transaction_id if session else self.current_transaction_id
@@ -488,6 +481,7 @@ class QueryProcessor:
             session.query_storage.clear()
             session.result_storage.clear()
             session.transaction_failed = False
+            session.modified_tables.clear()
         else:
             self.current_transaction_id = None
             self.multiple_transaction = False
@@ -495,6 +489,7 @@ class QueryProcessor:
             self.query_storage.clear()
             self.result_storage.clear()
             self.transaction_failed = False
+            self.modified_tables.clear()
 
     def _validate_ccm(self, table: str, action: str) -> None:
 
@@ -513,6 +508,23 @@ class QueryProcessor:
             raise Exception(f"CCM denied {action} access on {table}")
         self.cc_manager.log_object(
             table, self.current_transaction_id, action)
+
+    def _track_modified_table(self, table_name: str, client_address: tuple = None) -> None:
+        """Track a table that has been modified in the current transaction"""
+        table_lower = table_name.lower()
+
+        # Find the session by looking for current_transaction_id
+        for session in self.client_sessions.values():
+            if session.current_transaction_id == self.current_transaction_id:
+                session.modified_tables.add(table_lower)
+                print(
+                    f"[QP] Tracking modified table '{table_lower}' for post-commit refresh")
+                return
+
+        # Fallback to legacy mode
+        self.modified_tables.add(table_lower)
+        print(
+            f"[QP] Tracking modified table '{table_lower}' for post-commit refresh (legacy)")
 
     def _get_case_insensitive(self, row: dict, key: str, value_only: bool = False):
         key_lower = key.lower()
@@ -853,9 +865,8 @@ class QueryProcessor:
                        transaction_id=self.current_transaction_id)
         cnt = self.storage_manager.write_block(dw)
 
-        # Refresh statistics after insert (only if not in explicit transaction)
-        if not self.current_transaction_id and hasattr(self.optimizer, 'statistics_manager'):
-            self.optimizer.statistics_manager.refresh_table_stats(table)
+        # Track table for post-commit statistics refresh
+        self._track_modified_table(table)
 
         return Rows(data=[], rows_count=cnt, message=f"{cnt} row(s) affected")
 
@@ -896,9 +907,8 @@ class QueryProcessor:
                        transaction_id=self.current_transaction_id)
         cnt = self.storage_manager.write_block(dw)
 
-        # Refresh statistics after update (only if not in explicit transaction)
-        if not self.current_transaction_id and hasattr(self.optimizer, 'statistics_manager'):
-            self.optimizer.statistics_manager.refresh_table_stats(table)
+        # Track table for post-commit statistics refresh
+        self._track_modified_table(table)
 
         return Rows(data=[], rows_count=cnt, message=f"{cnt} row(s) updated")
 
@@ -933,9 +943,8 @@ class QueryProcessor:
                           transaction_id=self.current_transaction_id)
         cnt = self.storage_manager.delete_block(dd)
 
-        # Refresh statistics after delete (only if not in explicit transaction)
-        if not self.current_transaction_id and hasattr(self.optimizer, 'statistics_manager'):
-            self.optimizer.statistics_manager.refresh_table_stats(table)
+        # Track table for post-commit statistics refresh
+        self._track_modified_table(table)
 
         return Rows(data=[], rows_count=cnt, message=f"{cnt} row(s) affected")
 
@@ -1262,10 +1271,8 @@ class QueryProcessor:
                             f"{c['name']} -> {fk['table']}({fk['column']}) ON DELETE {fk['on_delete'].upper()}")
                 msg += f", FOREIGN KEY: {', '.join(fk_details)}"
 
-            # Refresh statistics for the new table
-            if hasattr(self.optimizer, 'statistics_manager'):
-                self.optimizer.statistics_manager.refresh_table_stats(
-                    table_name)
+            # Track table for post-commit statistics refresh
+            self._track_modified_table(table_name)
 
             return Rows(data=[], rows_count=0, message=msg)
         except FileExistsError as e:
