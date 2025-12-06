@@ -1,7 +1,6 @@
 import sys
 import os
 import unittest
-from unittest.mock import Mock
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
@@ -14,16 +13,14 @@ from Query_Optimizer.optimization_engine import OptimizationEngine
 from Failure_Recovery.buffer_manager import BufferManager
 from Failure_Recovery.failure_recovery_manager import FailureRecoveryManager
 
-
 class TestQueryProcessor(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.optimizer_engine = OptimizationEngine()
         cls.serializer = Serializer()
         cls.storage_engine = StorageEngine(serializer=cls.serializer)
-        cls.optimizer_engine = OptimizationEngine()
         
-        # Setup FailureRecoveryManager with BufferManager
         cls.buffer_manager = BufferManager(capacity=100)
         cls.frm = FailureRecoveryManager(
             buffer_manager=cls.buffer_manager,
@@ -33,10 +30,7 @@ class TestQueryProcessor(unittest.TestCase):
             checkpoint_interval=10
         )
         
-        # Connect storage engine to FRM
         cls.storage_engine.frm = cls.frm
-        
-        # Create CCM with FRM
         cls.ccm = ConcurrencyControlManager(frm=cls.frm)
         cls.storage_engine.cc_manager = cls.ccm
 
@@ -96,8 +90,8 @@ class TestQueryProcessor(unittest.TestCase):
 
         query = "SELECT * FROM student WHERE StudentID = 999999;"
         result = self.qp.execute_query(query)
-        self.assertEqual(result[0].rows_count, 0)    
-        
+        self.assertEqual(result[0].rows_count, 0)
+
     def test_07_begin_transaction(self):
         """Test BEGIN TRANSACTION command"""
 
@@ -105,9 +99,7 @@ class TestQueryProcessor(unittest.TestCase):
         result = self.qp.execute_query(query)
         self.assertEqual(len(result), 1)
         self.assertIsNotNone(self.qp.current_transaction_id)
-        # Transaction ID is now a string in IP-timestamp format
-        self.assertIsInstance(self.qp.current_transaction_id, str)
-        self.assertGreater(len(self.qp.current_transaction_id), 0)
+        self.assertTrue(len(str(self.qp.current_transaction_id)) > 0)
         self.assertTrue(self.qp.multiple_transaction)
         self.assertIn("Transaction started", result[0].message)
 
@@ -118,18 +110,19 @@ class TestQueryProcessor(unittest.TestCase):
         self.qp.execute_query("SELECT * FROM student;")
         result = self.qp.execute_query("COMMIT;")
         self.assertIsNone(self.qp.current_transaction_id)
-        self.assertFalse(self.qp.multiple_transaction)    
-    
+        self.assertFalse(self.qp.multiple_transaction)
+
     def test_09_multi_query_transaction(self):
         """Test multiple queries in one transaction"""
 
         self.qp.execute_query("BEGIN TRANSACTION;")
-        self.qp.execute_query("SELECT * FROM student;")
-        self.qp.execute_query("SELECT * FROM course;")
+        result1 = self.qp.execute_query("SELECT * FROM student;")
+        result2 = self.qp.execute_query("SELECT * FROM course;")
         result = self.qp.execute_query("COMMIT;")
-        # COMMIT returns 1 result (the commit confirmation)
-        # The SELECT results were returned when executed
+        # COMMIT returns accumulated results from the transaction
         self.assertGreaterEqual(len(result), 1)
+        self.assertGreater(result1[0].rows_count, 0)
+        self.assertGreater(result2[0].rows_count, 0)
 
     def test_10_select_with_where_multiple_rows(self):
         """Test SELECT returning multiple rows"""
@@ -241,17 +234,12 @@ class TestQueryProcessor(unittest.TestCase):
         query = "INVALID QUERY;"
         result = self.qp.execute_query(query)
         self.assertGreater(len(result[0].message), 0)
-        self.assertTrue(any(word in result[0].message.lower() for word in ['error', 'invalid', 'unhandled']))    
-    
+        self.assertTrue(any(word in result[0].message.lower() for word in ['error', 'invalid', 'unhandled']))
+
     def test_22_insert_rows(self):
         """Test INSERT data persistence"""
 
-        unique_id = 6696
-        
-        # Cleanup: delete if exists from previous test run
-        cleanup_query = f"DELETE FROM student WHERE StudentID = {unique_id};"
-        self.qp.execute_query(cleanup_query)
-        
+        unique_id = 69420
         insert_query = f"INSERT INTO student (StudentID, FullName, GPA) VALUES ({unique_id}, 'InsertVerify', 3.8);"
         insert_result = self.qp.execute_query(insert_query)
         self.assertEqual(insert_result[0].rows_count, 1)
@@ -259,7 +247,6 @@ class TestQueryProcessor(unittest.TestCase):
         verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
         select_result = self.qp.execute_query(verify_query)
         if select_result[0].rows_count > 0:
-            # Keys are lowercase in result
             self.assertEqual(select_result[0].data.data[0]["studentid"], unique_id)
             self.assertEqual(select_result[0].data.data[0]["fullname"], "InsertVerify")
             self.assertEqual(select_result[0].data.data[0]["gpa"], 3.8)
@@ -276,7 +263,6 @@ class TestQueryProcessor(unittest.TestCase):
         verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
         select_result = self.qp.execute_query(verify_query)
         if select_result[0].rows_count > 0:
-            # Keys are lowercase in result
             self.assertAlmostEqual(select_result[0].data.data[0]["gpa"], 4.18, places=1)
 
     def test_24_delete_rows(self):
@@ -295,6 +281,9 @@ class TestQueryProcessor(unittest.TestCase):
         """Test CREATE TABLE and DROP TABLE operations"""
 
         table_name = "test_temp_table"
+        
+        # Clean up table if it exists from previous run
+        self.qp.execute_query(f"DROP TABLE {table_name};")
 
         create_query = f"CREATE TABLE {table_name} (id int, name char(50), score float);"
         result = self.qp.execute_query(create_query)

@@ -116,19 +116,18 @@ class QueryProcessor:
         if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
             return [self._handle_rollback(query, client_address)]
 
-        # Handle SET CONCURRENCY command
         if query_upper.startswith("SET CONCURRENCY"):
             return [self._handle_set_concurrency(query, client_address)]
 
         if explicit_transaction:
-            # Check if transaction is in failed state
+            # in failed state
             if transaction_failed:
                 return [self._create_error_result(
                     query,
                     f"Transaction {current_transaction_id} has failed. Please ROLLBACK before proceeding."
                 )]
 
-            # Validate query syntax even in transaction mode
+            # validate query syntax even in transaction mode
             if not query.endswith(";"):
                 if session:
                     session.transaction_failed = True
@@ -141,30 +140,24 @@ class QueryProcessor:
                 return [error_result]
 
             try:
-                # Try to parse and validate the query
                 parsed_query = self.optimizer.parse_query(query)
                 optimized_query = self.optimizer.optimize_query(parsed_query)
 
-                # Check if this is a SELECT query (read-only)
-                # Check by examining the query string since parser returns PROJECTION for SELECT
                 query_upper = query.strip().upper()
                 is_select_query = query_upper.startswith("SELECT")
 
                 if is_select_query:
-                    # Execute SELECT immediately (read uncommitted changes from buffer)
                     print(
                         f"[QP] Executing SELECT in transaction {current_transaction_id}")
                     try:
-                        # Set transaction context for downstream methods
                         self.current_transaction_id = current_transaction_id
 
                         result = self._process_node(optimized_query.query_tree)
                         message = result.message if result.message else f"Query returned {result.rows_count} row(s)"
 
-                        # Track query for commit count
+                        # track query for commit count
                         query_storage.append(query)
 
-                        # Return result immediately to user (no queuing)
                         return [ExecutionResult(
                             data=result,
                             message=message,
@@ -174,7 +167,6 @@ class QueryProcessor:
                             rows_count=result.rows_count if result else 0
                         )]
                     except Exception as exec_error:
-                        # Execution error - mark transaction as failed
                         print(f"[QP] SELECT execution error: {exec_error}")
                         import traceback
                         traceback.print_exc()
@@ -186,20 +178,19 @@ class QueryProcessor:
                             query, f"Execution error: {str(exec_error)}. Transaction marked as failed. Please ROLLBACK.")
                         return [error_result]
                 else:
-                    # Write operations (INSERT, UPDATE, DELETE) - execute immediately but DON'T commit to disk
+                    # write operations (INSERT, UPDATE, DELETE) execute immediately, not committed to disk
                     print(
                         f"[QP] Executing write operation in transaction {current_transaction_id}")
                     try:
-                        # Set transaction context for downstream methods
                         self.current_transaction_id = current_transaction_id
 
                         result = self._process_node(optimized_query.query_tree)
                         message = result.message if result.message else f"Query affected {result.rows_count} row(s)"
 
-                        # Track query for commit count
+                        # track query for commit count
                         query_storage.append(query)
 
-                        # Return result immediately (data in buffer, pending commit to disk)
+                        # return result immediately (data in buffer, pending commit to disk)
                         return [ExecutionResult(
                             data=result,
                             message=f"{message} (pending commit)",
@@ -209,9 +200,11 @@ class QueryProcessor:
                             rows_count=result.rows_count if result else 0
                         )]
                     except Exception as exec_error:
-                        # Execution error - mark transaction as failed
                         print(
                             f"[QP] Write operation execution error: {exec_error}")
+                        if self.DEBUG:
+                            import traceback
+                            traceback.print_exc()
                         if session:
                             session.transaction_failed = True
                         else:
@@ -220,11 +213,13 @@ class QueryProcessor:
                             query, f"Execution error: {str(exec_error)}. Transaction marked as failed. Please ROLLBACK.")
                         return [error_result]
             except Exception as e:
-                # Query has syntax error - mark transaction as failed
                 error_msg = str(e)
                 print(
                     f"[QP] Query parsing failed in transaction {current_transaction_id}")
                 print(f"[QP] Error: {error_msg}")
+                if self.DEBUG:
+                    import traceback
+                    traceback.print_exc()
                 if session:
                     session.transaction_failed = True
                 else:
@@ -251,7 +246,7 @@ class QueryProcessor:
             optimized_query = self.optimizer.optimize_query(parsed_query)
             result = self._process_node(optimized_query.query_tree)
 
-            # Don't mask failures with generic "success" message
+            # Not mask failures with generic "success" message
             message = result.message if result.message else f"Query returned {result.rows_count} row(s)"
 
             execution_result = ExecutionResult(
@@ -269,6 +264,9 @@ class QueryProcessor:
         except Exception as e:
             error_msg = str(e)
             print(f"[QP] Error: {error_msg}")
+            if self.DEBUG:
+                import traceback
+                traceback.print_exc()
             if self.current_transaction_id is not None:
                 self._rollback(session)
 
@@ -298,12 +296,12 @@ class QueryProcessor:
             )
 
         # Extract client IP and port from address tuple
-        # For backward compatibility, allow None (will use default values in TransactionIdGenerator)
         if client_address:
+            # For real client connections
             client_ip = client_address[0]
             client_port = client_address[1]
         else:
-            # Legacy mode or auto-commit without client info
+            # For unittests and non-client scenarios
             client_ip = None
             client_port = None
 
@@ -315,9 +313,6 @@ class QueryProcessor:
             session.current_transaction_id = new_transaction_id
             session.multiple_transaction = True
             session.explicit_transaction = True
-            # IMPORTANT: Set instance variable for downstream methods to access
-            # This is needed because _process_node and other methods use self.current_transaction_id
-            # We set it temporarily for this session's operations
             self.current_transaction_id = new_transaction_id
         else:
             self.current_transaction_id = new_transaction_id
@@ -419,18 +414,17 @@ class QueryProcessor:
         message = f"Transaction rolled back. {query_count} pending {'query' if query_count == 1 else 'queries'} discarded." if query_count > 0 else "Transaction rolled back."
 
         return ExecutionResult(
-            transaction_id=tid or 0,
+            transaction_id=tid if tid else 0,
             query=query,
             timestamp=datetime.now(),
             message=message
         )
 
     def _handle_set_concurrency(self, query: str, client_address: tuple = None) -> ExecutionResult:
-        """
-        Handle SET CONCURRENCY command to switch concurrency control mechanism
-        Syntax: SET CONCURRENCY TO <mechanism>;
-        Supported mechanisms: LOCK-BASED, TIMESTAMP-BASED, VALIDATION-BASED, MULTI-VERSION
-        """
+
+        # SET CONCURRENCY TO <mechanism>; 
+        # Supported mechanisms: LOCK-BASED, TIMESTAMP-BASED, VALIDATION-BASED, MULTI-VERSION
+
         try:
             # Parse the command
             # Expected format: "SET CONCURRENCY TO <mechanism>;"
@@ -481,14 +475,7 @@ class QueryProcessor:
                 timestamp=datetime.now(),
                 message=f"Error changing concurrency mechanism: {str(e)}"
             )
-
-        return ExecutionResult(
-            transaction_id=tid if tid else 0,
-            query=query,
-            timestamp=datetime.now(),
-            message=message
-        )
-
+        
     def _commit(self, session: ClientSession = None) -> None:
         current_transaction_id = session.current_transaction_id if session else self.current_transaction_id
 
@@ -715,7 +702,7 @@ class QueryProcessor:
             for right_row in right.data:
                 merged = {**left_row, **right_row}
 
-                if self._match_theta_condition(merged, condition_node):
+                if self._evaluate_condition_node(merged, condition_node):
                     result.append(merged)
 
         return Rows(data=result, rows_count=len(result))
@@ -1110,56 +1097,36 @@ class QueryProcessor:
                     f"Column '{right_child.val}' does not exist in query result")
 
     def _apply_condition(self, rows: Rows, node) -> Rows:
+        """Apply a condition node to filter rows"""
+        
+        if not rows.data or node.type != QueryTypes.OPERATOR:
+            return rows
 
-        # handle AND, OR, dan comparison
+        self._validate_columns_in_condition(node, rows.data[0])
 
-        if node.type == QueryTypes.OPERATOR:
-            conds = self._extract_conditions(node)
-
-            if rows.data:
-                self._validate_columns_in_condition(node, rows.data[0])
-
-            filtered = [
-                r for r in rows.data if self.storage_manager._matches_conditions(r, conds)]
-            return Rows(data=filtered, rows_count=len(filtered))
-
-        if node.type == "AND":
-            current = rows
-            for child in node.childs:
-                current = self._apply_condition(current, child)
-            return current
-
-        if node.type == "OR":
-            results = []
-            for child in node.childs:
-                results.extend(self._apply_condition(rows, child).data)
-            unique = [dict(t) for t in {tuple(d.items()) for d in results}]
-            return Rows(data=unique, rows_count=len(unique))
-
-        return rows
+        filtered = [r for r in rows.data if self._evaluate_condition_node(r, node)]
+        return Rows(data=filtered, rows_count=len(filtered))
 
     def _extract_conditions(self, node) -> List[Condition]:
-
+        
         if not node or node.type != QueryTypes.OPERATOR or not node.val:
             return []
 
-        # logical operators (AND/OR), recursively
+        # Logical operators (AND/OR) - recursively extract from children
         if node.val in ["AND", "OR"]:
             conditions = []
             for child in node.childs:
                 conditions.extend(self._extract_conditions(child))
             return conditions
 
-        # comparison operators (=, <>, >, etc.)
+        # Comparison operators (=, <>, >, etc.)
         if len(node.childs) < 2:
             return []
 
         left_child = node.childs[0]
         right_child = node.childs[1]
 
-        col = left_child.val if left_child.type == QueryTypes.COLUMN else str(
-            left_child.val)
-
+        col = left_child.val if left_child.type == QueryTypes.COLUMN else str(left_child.val)
         op = node.val
         val = right_child.val
 
@@ -1172,16 +1139,18 @@ class QueryProcessor:
 
         return [Condition(column=col, operation=op, operand=val)]
 
-    def _match_theta_condition(self, row: dict, node) -> bool:
+    def _evaluate_condition_node(self, row: dict, node) -> bool:
 
         if not node or node.type != QueryTypes.OPERATOR:
             return True
 
+        # handle logical operators recursively
         if node.val == "AND":
-            return all(self._match_theta_condition(row, child) for child in node.childs)
+            return all(self._evaluate_condition_node(row, child) for child in node.childs)
         elif node.val == "OR":
-            return any(self._match_theta_condition(row, child) for child in node.childs)
+            return any(self._evaluate_condition_node(row, child) for child in node.childs)
 
+        # handle comparison operators
         if len(node.childs) < 2:
             return False
 
@@ -1189,22 +1158,19 @@ class QueryProcessor:
         right_child = node.childs[1]
         op = node.val
 
+        # get left value (column or literal)
         if left_child.type == QueryTypes.COLUMN:
             left_val = row.get(left_child.val)
-            if left_val is None and left_child.val not in row:
-                raise ValueError(
-                    f"Column '{left_child.val}' does not exist in query result")
         else:
             left_val = left_child.val
 
+        # get right value (column or literal)
         if right_child.type == QueryTypes.COLUMN:
             right_val = row.get(right_child.val)
-            if right_val is None and right_child.val not in row:
-                raise ValueError(
-                    f"Column '{right_child.val}' does not exist in query result")
         else:
             right_val = right_child.val
 
+        # use storage manager's evaluation logic for consistency
         condition = Condition(column="", operation=op, operand=right_val)
         return self.storage_manager._evaluate_condition(left_val, condition)
 
@@ -1243,3 +1209,4 @@ class QueryProcessor:
             message=f"Error: {error_msg}",
             rows_count=0
         )
+    
