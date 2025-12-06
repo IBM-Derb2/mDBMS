@@ -879,21 +879,22 @@ class QueryProcessor:
 
         table = node.childs[0].val
         col = []
-        val = None
+        val = []
         conditions = []
 
         for child in node.childs[1:]:
             if child.type == QueryTypes.SET:
-                if child.childs and child.childs[0].type == QueryTypes.ASSIGNMENT:
-                    assign = child.childs[0]
-                    col = [assign.childs[0].val]
-                    right_side = assign.childs[1]
+                # Process all assignments, not just the first one
+                for assign_node in child.childs:
+                    if assign_node.type == QueryTypes.ASSIGNMENT:
+                        col.append(assign_node.childs[0].val)
+                        right_side = assign_node.childs[1]
 
-                    # cek right side: expression atau literal
-                    if right_side.type == QueryTypes.OPERATOR:
-                        val = self._flatten_expression(right_side)
-                    else:
-                        val = right_side.val
+                        # cek right side: expression atau literal
+                        if right_side.type == QueryTypes.OPERATOR:
+                            val.append(self._flatten_expression(right_side))
+                        else:
+                            val.append(right_side.val)
             elif child.type == QueryTypes.WHERE:
                 if child.childs:
                     conditions = self._extract_conditions(child.childs[0])
