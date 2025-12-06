@@ -28,13 +28,21 @@ class RecoveryEngine:
         print("\n[Recovery] ===== REDO PHASE =====")
         entries_after.reverse()
         redo_count = 0
-        aborted_transactions = set()  # Track aborted transactions
-
+        
+        # PASS 1: Scan SEMUA entries untuk cari ABORT transactions
+        aborted_transactions = set()
+        for entry in entries_after:
+            if entry.action == "abort":
+                aborted_transactions.add(entry.transaction_id)
+                print(f"[Recovery] Found ABORT for TX {entry.transaction_id}")
+        
+        # PASS 2: REDO dengan skip aborted transactions
         for entry in entries_after:
             tx_id = entry.transaction_id
             action = entry.action
 
             if action in ["insert", "update", "delete"]:
+                # Skip jika transaction sudah di-ABORT
                 if tx_id not in aborted_transactions:
                     print(f"[Recovery] REDO: TX {tx_id} {action.upper()} on {entry.table_name}")
                     self._apply_redo(entry)
@@ -47,7 +55,6 @@ class RecoveryEngine:
                 undo_list.discard(tx_id)
             elif action == "abort":
                 undo_list.discard(tx_id)
-                aborted_transactions.add(tx_id) 
 
         print(f"[Recovery] REDO complete: {redo_count} operations re-applied")
         print(f"[Recovery] Transactions needing UNDO: {undo_list}")

@@ -564,10 +564,11 @@ class TestFailureRecoveryIntegration(unittest.TestCase):
         
         stats = new_frm.recover()
         
-        # After checkpoint with no ongoing transactions, WAL is cleared
-        # Recovery should find checkpoint but no operations to redo
-        # So we need to read from disk instead
+        # After checkpoint with no ongoing transactions
         self.assertTrue(stats['checkpoint_found'])
+        
+        # Set FRM ke storage agar storage.read_block() bisa akses buffer
+        self.storage.frm = new_frm
         
         # Data should be on disk, load it
         from Storage_Manager.utils import DataRetrieval
