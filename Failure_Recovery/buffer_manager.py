@@ -2,9 +2,10 @@ from typing import Dict, Any, List
 from .frm_types import BufferedRow, BUFFER_CAPACITY
 
 class TableWrapper:
-    def __init__(self, name, data):
+    def __init__(self, name, data, deleted_keys=None):
         self.name = name
         self.data = data
+        self.deleted_keys = deleted_keys or []
 
 class BufferManager:
     """LRU buffer with WAL integration for dirty block management"""
@@ -158,14 +159,11 @@ class BufferManager:
         return len(self.buffer_data) >= (self.capacity * 0.75)
     
     def flush_dirty_blocks(self):
-        """Merge dirty blocks with disk data, write to disk, reset dirty flags"""
         dirty_rows = [row for row in self.buffer_data.values() if row.is_dirty]
-        
         if not dirty_rows:
             self.clear_buffer()
             return
-        
-        print(f"[Buffer] Flushing {len(dirty_rows)} dirty blocks...")
+        print(f"[Buffer] Menyiapkan {len(dirty_rows)} blok kotor. Melakukan Merge dengan Disk...")
         dirty_table_names = set(row.table_name for row in dirty_rows)
         self.tables = []
 
@@ -179,13 +177,12 @@ class BufferManager:
                 pass
             
             final_rows = []
+            deleted_pk_tuples = []  # Track deleted primary keys
             buffer_updates = [r for r in dirty_rows if r.table_name == t_name]
             processed_buffer_keys = set()
-            
             for disk_row in current_disk_data:
                 updated_row = disk_row
                 should_keep = True
-                
                 for buf_row in buffer_updates:
                     is_match = True
                     for k, v in buf_row.primary_key_value.items():
@@ -196,6 +193,8 @@ class BufferManager:
                     if is_match:
                         if buf_row.is_deleted:
                             should_keep = False
+                            pk_tuple = tuple(buf_row.primary_key_value.values())
+                            deleted_pk_tuples.append(pk_tuple)
                         else:
                             updated_row = buf_row.data
                         
@@ -214,23 +213,20 @@ class BufferManager:
                     buf_row.is_dirty = False
                 elif buf_row.is_deleted:
                     buf_row.is_dirty = False
+                    # Track the deleted PK
+                    pk_tuple = tuple(buf_row.primary_key_value.values())
+                    if pk_tuple not in deleted_pk_tuples:
+                        deleted_pk_tuples.append(pk_tuple)
 
-            self.tables.append(TableWrapper(t_name, final_rows))
-        
+            self.tables.append(TableWrapper(t_name, final_rows, deleted_pk_tuples))
+
         self.save_buffer_callback(self)
         print(f"[Buffer] Flush complete. Tables: {list(dirty_table_names)}")
         
         self.tables = []
-        deleted_keys = [key for key, row in self.buffer_data.items() if row.is_deleted]
-        for key in deleted_keys:
-            self.buffer_data.pop(key)
-            if key in self.lru_order:
-                self.lru_order.remove(key)
-
         for row in self.buffer_data.values():
             row.is_dirty = False
-        print(f"[Buffer] Flushed. Removed {len(deleted_keys)} deleted rows. {len(self.buffer_data)} blocks remain cached")
-    
+        print(f"[Buffer Manager] Buffer dirty flags reset. {len(self.buffer_data)} blocks remain cached.")    
     def clear_buffer(self):
         self.buffer_data.clear()
         self.lru_order.clear()
