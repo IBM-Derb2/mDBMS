@@ -232,7 +232,7 @@ class WALManager:
         for line in lines:
             try:
                 entry = json.loads(line.strip())
-                tx_id = entry.get('transaction_id')
+                tx_id = str(entry.get('transaction_id'))
                 action = entry.get('action')
                 entry_type = entry.get('type')
 
