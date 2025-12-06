@@ -107,17 +107,23 @@ class DDLParser(BaseParser):
 
             elif self._match_keyword('CONSTRAINT'):
                 raise NotImplementedError(
-                    "Parsing 'CONSTRAINT' belum didukung")
+                    "Parsing 'CONSTRAINT' belum didukung"
+                )
 
             elif self.current_token.type == 'IDENTIFIER':
                 col_name = self.current_token.value
                 self._advance()
 
                 # Check for data type
-                if not (self._match_keyword('INT') or self._match_keyword('FLOAT') or
-                        self._match_keyword('CHAR') or self._match_keyword('VARCHAR')):
+                if not (
+                    self._match_keyword('INT') or
+                    self._match_keyword('FLOAT') or
+                    self._match_keyword('CHAR') or
+                    self._match_keyword('VARCHAR')
+                ):
                     raise ValueError(
-                        f"Expected data type (INT, FLOAT, CHAR, or VARCHAR) after column '{col_name}', got '{self.current_token.value}'")
+                        f"Expected data type (INT, FLOAT, CHAR, or VARCHAR) after column '{col_name}', got '{self.current_token.value}'"
+                    )
 
                 data_type = self.current_token.value
                 self._advance()
@@ -127,35 +133,86 @@ class DDLParser(BaseParser):
                     self._advance()
                     if self.current_token.type != 'NUMBER':
                         raise ValueError(
-                            f"Expected size, got '{self.current_token.value}'")
+                            f"Expected size, got '{self.current_token.value}'"
+                        )
                     size = self.current_token.value
                     self._advance()
                     self._expect_punctuation(')')
 
                 constraints = []
-                while self._match_keyword('PRIMARY') or self._match_keyword('UNIQUE') or self._match_keyword('NOT'):
+                while (
+                    self._match_keyword('PRIMARY') or
+                    self._match_keyword('UNIQUE') or
+                    self._match_keyword('NOT') or
+                    self._match_keyword('REFERENCES')
+                ):
                     if self._match_keyword('PRIMARY'):
                         self._advance()
                         self._expect_keyword('KEY')
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val='PRIMARY_KEY'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='PRIMARY_KEY')
+                        )
+
                     elif self._match_keyword('UNIQUE'):
                         self._advance()
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val='UNIQUE'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='UNIQUE')
+                        )
+
                     elif self._match_keyword('NOT'):
                         self._advance()
                         self._expect_keyword('NULL')
                         constraints.append(
-                            QueryTree(type=QueryTypes.CONSTRAINT, val='NOT_NULL'))
+                            QueryTree(type=QueryTypes.CONSTRAINT, val='NOT_NULL')
+                        )
 
-                # Buat node
+                    elif self._match_keyword('REFERENCES'):
+                        # Inline foreign key: REFERENCES table(column) [ON DELETE CASCADE|RESTRICT]
+                        self._advance()
+
+                        # Get referenced table name
+                        ref_table = self.current_token.value
+                        self._advance()
+
+                        # Get referenced column
+                        self._expect_punctuation('(')
+                        ref_col = self.current_token.value
+                        self._advance()
+                        self._expect_punctuation(')')
+
+                        # Check for ON DELETE action
+                        on_delete = 'RESTRICT'  # default
+                        if self._match_keyword('ON'):
+                            self._advance()
+                            self._expect_keyword('DELETE')
+                            if self._match_keyword('CASCADE'):
+                                self._advance()
+                                on_delete = 'CASCADE'
+                            elif self._match_keyword('RESTRICT'):
+                                self._advance()
+                                on_delete = 'RESTRICT'
+                            else:
+                                raise ValueError(
+                                    f"Expected CASCADE or RESTRICT after ON DELETE, got '{self.current_token.value}'"
+                                )
+
+                        # Create foreign key constraint node
+                        fk_node = QueryTree(type=QueryTypes.FOREIGN_KEY_CONSTRAINT, val=col_name)
+                        fk_node.childs.append(QueryTree(type=QueryTypes.REFERENCES_TABLE, val=ref_table))
+                        fk_node.childs.append(QueryTree(type=QueryTypes.REFERENCES_COLUMN, val=ref_col))
+                        fk_node.childs.append(QueryTree(type=QueryTypes.CONSTRAINT, val=on_delete))
+                        constraints.append(fk_node)
+
+                # Buat node tipe data
                 type_val = data_type if not size else f"{data_type}({size})"
                 type_node = QueryTree(type=QueryTypes.DATA_TYPE, val=type_val)
 
                 childs = [type_node] + constraints
-                col_def = QueryTree(type=QueryTypes.COLUMN_DEF,
-                                    val=col_name, childs=childs)
+                col_def = QueryTree(
+                    type=QueryTypes.COLUMN_DEF,
+                    val=col_name,
+                    childs=childs
+                )
                 columns.append(col_def)
 
             else:
@@ -170,6 +227,7 @@ class DDLParser(BaseParser):
                 break
 
         return QueryTree(type=QueryTypes.COLUMN_DEFS, val='', childs=columns)
+
 
     def parse_drop(self) -> QueryTree:
         """Parse DROP TABLE statement"""

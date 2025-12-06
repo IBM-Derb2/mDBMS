@@ -176,9 +176,7 @@ class Serializer:
         # nama tabel
         table_name = schema["table_name"]
         binary_data.extend(table_name.encode('utf-8'))
-        binary_data.append(0)  # Null terminator
-
-        # kolom
+        binary_data.append(0)  # Null terminator        # kolom
         for column in schema["columns"]:
             # nama kolom
             column_name = column["name"].lower()
@@ -194,6 +192,27 @@ class Serializer:
             if column_type == "varchar" or column_type == "char":
                 length = column["length"]
                 binary_data.extend(length.to_bytes(1, byteorder="big"))
+
+            # Constraint flags byte: bit 0 = primary_key, bit 1 = has_foreign_key
+            flags = 0
+            if column.get("primary_key", False):
+                flags |= 0x01
+            if column.get("foreign_key"):
+                flags |= 0x02
+            binary_data.append(flags)
+
+            # Foreign key info (if present)
+            if column.get("foreign_key"):
+                fk = column["foreign_key"]
+                # ref table name
+                binary_data.extend(fk["table"].encode('utf-8'))
+                binary_data.append(0)
+                # ref column name
+                binary_data.extend(fk["column"].encode('utf-8'))
+                binary_data.append(0)
+                # on_delete action: 0 = restrict, 1 = cascade
+                on_delete_byte = 1 if fk.get("on_delete", "restrict").lower() == "cascade" else 0
+                binary_data.append(on_delete_byte)
 
         return bytes(binary_data)
 
@@ -240,6 +259,34 @@ class Serializer:
             if column["type"] == "varchar" or column["type"] == "char":
                 column["length"] = int.from_bytes(binary_data[i:i+1], byteorder="big")
                 i += 1
+
+            # Read constraint flags (if available - for backward compatibility)
+            if i < len(binary_data):
+                flags = binary_data[i]
+                # Check if this looks like a flags byte (0-3) or start of next column name
+                if flags <= 3:
+                    i += 1
+                    if flags & 0x01:
+                        column["primary_key"] = True
+                    if flags & 0x02:
+                        # Has foreign key - read FK info
+                        fk_table_end = binary_data.index(b"\x00", i)
+                        fk_table = binary_data[i:fk_table_end].decode('utf-8')
+                        i = fk_table_end + 1
+
+                        fk_col_end = binary_data.index(b"\x00", i)
+                        fk_col = binary_data[i:fk_col_end].decode('utf-8')
+                        i = fk_col_end + 1
+
+                        on_delete_byte = binary_data[i]
+                        i += 1
+                        on_delete = "cascade" if on_delete_byte == 1 else "restrict"
+
+                        column["foreign_key"] = {
+                            "table": fk_table,
+                            "column": fk_col,
+                            "on_delete": on_delete
+                        }
 
             columns.append(column)
 

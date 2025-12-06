@@ -3,9 +3,10 @@ from .frm_types import BufferedRow, BUFFER_CAPACITY
 
 
 class TableWrapper:
-    def __init__(self, name, data):
+    def __init__(self, name, data, deleted_keys=None):
         self.name = name
         self.data = data
+        self.deleted_keys = deleted_keys or []
 
 class BufferManager:
     def __init__(self, capacity: int = BUFFER_CAPACITY):
@@ -37,9 +38,7 @@ class BufferManager:
         # Memindahkan key yang baru diakses ke belakang list (Most Recently Used).
         if key in self.lru_order:
             self.lru_order.remove(key)
-        self.lru_order.append(key) # Key baru diakses ditambah di akhir
-
-    # Logika Interaksi Buffer
+        self.lru_order.append(key) # Key baru diakses ditambah di akhir    # Logika Interaksi Buffer
     def read_block(self, table_name: str, pk_value: Dict[str, Any]) -> BufferedRow:
         key = self._get_buffer_key(table_name, pk_value)
         pk_str = str(pk_value)
@@ -56,8 +55,10 @@ class BufferManager:
         found_row = None
         for row_data in table_obj.data:
             is_match = True
+            # Create lowercase version of row_data keys for comparison
+            row_data_lower = {k.lower(): v for k, v in row_data.items()}
             for k, v in pk_value.items():
-                if row_data.get(k) != v:
+                if row_data_lower.get(k.lower()) != v:
                     is_match = False
                     break
             if is_match:
@@ -145,8 +146,7 @@ class BufferManager:
     def is_buffer_almost_full(self) -> bool:
         # Mendeteksi kapan buffer hampir penuh (misalnya 75%)
         return len(self.buffer_data) >= (self.capacity*0.75)
-    
-    # Logika Flush Buffer
+      # Logika Flush Buffer
     def flush_dirty_blocks(self):
         dirty_rows = [row for row in self.buffer_data.values() if row.is_dirty]
         if not dirty_rows:
@@ -164,17 +164,20 @@ class BufferManager:
                     current_disk_data = table_obj.data
             except:
                 pass # Tabel baru
-            
             final_rows = []
+            deleted_keys = []  # Track deleted row PKs
             buffer_updates = [r for r in dirty_rows if r.table_name == t_name]
             processed_buffer_keys = set()
             for disk_row in current_disk_data:
                 updated_row = disk_row
                 should_keep = True
+                # Create lowercase version of disk_row keys for comparison
+                disk_row_lower = {k.lower(): v for k, v in disk_row.items()}
                 for buf_row in buffer_updates:
                     is_match = True
                     for k, v in buf_row.primary_key_value.items():
-                        if disk_row.get(k) != v:
+                        # Compare with lowercase keys
+                        if disk_row_lower.get(k.lower()) != v:
                             is_match = False
                             break
 
@@ -182,6 +185,8 @@ class BufferManager:
                         if buf_row.is_deleted:
                             # Row is deleted, don't include in final_rows
                             should_keep = False
+                            # Add to deleted_keys for disk cleanup
+                            deleted_keys.append(tuple(buf_row.primary_key_value.get(k) for k in sorted(buf_row.primary_key_value.keys())))
                         else:
                             # Row is updated, use buffer version
                             updated_row = buf_row.data
@@ -202,7 +207,7 @@ class BufferManager:
                     # Deleted rows are not written to disk
                     buf_row.is_dirty = False
 
-            self.tables.append(TableWrapper(t_name, final_rows))
+            self.tables.append(TableWrapper(t_name, final_rows, deleted_keys))
         self.save_buffer_callback(self)
         print(f"[Buffer] Flush & Merge selesai. Tabel: {list(dirty_table_names)}")
         self.tables = []
