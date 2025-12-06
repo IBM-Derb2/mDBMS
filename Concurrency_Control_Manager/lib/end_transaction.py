@@ -1,5 +1,7 @@
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
+import traceback
+
 from .transaction_model import TransactionManager, TransactionStatus
 from .strategy_interface import ConcurrencyStrategy
 
@@ -87,8 +89,6 @@ class EndTransactionManager:
         except Exception as e:
             report.success = False
             report.add_message(f"Error during end transaction: {str(e)}")
-            import traceback
-
             traceback.print_exc()
 
         return report
