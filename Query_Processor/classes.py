@@ -520,11 +520,20 @@ class QueryProcessor:
             count += 1
 
         if not response.allowed:
-            raise Exception(f"CCM denied {action} access on {table}")
-
-        # Actually acquire the lock after validation succeeds
+            raise Exception(f"CCM denied {action} access on {table}")        # Actually acquire the lock after validation succeeds
         self.cc_manager.log_object(
             table, self.current_transaction_id, action)
+
+    def _get_case_insensitive(self, row: dict, key: str, value_only: bool = False):
+        """
+        Get value from row dictionary with case-insensitive key matching.
+        If value_only is True, returns only the value, otherwise returns (key, value) tuple.
+        """
+        key_lower = key.lower()
+        for k, v in row.items():
+            if k.lower() == key_lower:
+                return v if value_only else (k, v)
+        return None
 
     # abstraksi traverse query tree (relational algebra), recursively
 
@@ -835,9 +844,7 @@ class QueryProcessor:
         new_row = {}
         for col in schema_dict["columns"]:
             new_row[col["name"]] = self.storage_manager.TYPE_DEFAULTS.get(
-                col["type"], None)
-
-        # Fill in provided values
+                col["type"], None)        # Fill in provided values
         if not cols:
             # No columns specified, use schema order
             for i, col in enumerate(schema_dict["columns"]):
@@ -848,6 +855,11 @@ class QueryProcessor:
             for i, col_name in enumerate(cols):
                 if i < len(vals):
                     new_row[col_name] = vals[i]
+
+        # Validate foreign key constraints
+        fk_error = self._validate_fk_on_insert(schema_dict, new_row)
+        if fk_error:
+            return Rows(data=[], rows_count=0, message=fk_error)
 
         # log operation (after validate, before storage)
         if self.current_transaction_id:
@@ -886,39 +898,9 @@ class QueryProcessor:
                 if child.childs:
                     conditions = self._extract_conditions(child.childs[0])
 
-        # First, acquire read lock to identify affected rows
-        if conditions:
-            # Acquire read lock on table to read data
-            self._validate_ccm(table, "read")
-
-            # Read current data to identify rows that match conditions
-            dr = DataRetrieval(table=table, column=[], conditions=conditions)
-            affected_rows = self.storage_manager.read_block(dr)
-
-            # Acquire exclusive locks on each affected row
-            if affected_rows.data:
-                # Get primary key column(s)
-                schema_file = self.storage_manager._get_schema_path(table)
-                with open(schema_file, "rb") as f:
-                    schema = f.read()
-                schema_dict = self.storage_manager.serializer.deserialize_schema(
-                    schema)
-                pk_columns = [col["name"] for col in schema_dict["columns"]
-                              if col.get("primary_key", False)]
-                if not pk_columns:
-                    pk_columns = [schema_dict["columns"][0]["name"]]
-
-                # Lock each affected row
-                for row in affected_rows.data:
-                    pk_values = ":".join(
-                        str(self.storage_manager._get_case_insensitive(row, pk_col, value_only=True))
-                        for pk_col in pk_columns
-                    )
-                    row_id = f"{table}:row:{pk_values}"
-                    self._validate_ccm(row_id, "write")
-        else:
-            # No WHERE clause - validate table-level lock (affects all rows)
-            self._validate_ccm(table, "write")
+        # Use table-level locking for UPDATE operations
+        # (Row-level locking causes issues during strategy switching)
+        self._validate_ccm(table, "write")
 
         # Log operation (after validate, before storage)
         if self.current_transaction_id:
@@ -943,40 +925,10 @@ class QueryProcessor:
             if where_node.childs:
                 conditions = self._extract_conditions(where_node.childs[0])
 
-        # First, acquire read lock to identify affected rows
-        if conditions:
-            # Acquire read lock on table to read data
-            self._validate_ccm(table, "read")
-
-            # Read current data to identify rows that match conditions
-            dr = DataRetrieval(table=table, column=[], conditions=conditions)
-            affected_rows = self.storage_manager.read_block(dr)
-
-            # Acquire exclusive locks on each affected row
-            if affected_rows.data:
-                # Get primary key column(s)
-                schema_file = self.storage_manager._get_schema_path(table)
-                with open(schema_file, "rb") as f:
-                    schema = f.read()
-                schema_dict = self.storage_manager.serializer.deserialize_schema(
-                    schema)
-                pk_columns = [col["name"] for col in schema_dict["columns"]
-                              if col.get("primary_key", False)]
-                if not pk_columns:
-                    pk_columns = [schema_dict["columns"][0]["name"]]
-
-                # Lock each affected row
-                for row in affected_rows.data:
-                    pk_values = ":".join(
-                        str(self.storage_manager._get_case_insensitive(row, pk_col, value_only=True))
-                        for pk_col in pk_columns
-                    )
-                    row_id = f"{table}:row:{pk_values}"
-                    self._validate_ccm(row_id, "write")
-        else:
-            # No WHERE clause - validate table-level lock (affects all rows)
-            self._validate_ccm(table, "write")
-
+        # Use table-level locking for DELETE operations
+        # (Row-level locking causes issues during strategy switching)
+        self._validate_ccm(table, "write")
+        
         # Log operation (after validate, before storage)
         if self.current_transaction_id:
             self.cc_manager.log_operation(
@@ -984,6 +936,16 @@ class QueryProcessor:
                 action="delete",
                 table_name=table
             )
+
+        # Check and handle foreign key constraints before delete
+        # First, get the rows that will be deleted
+        dr = DataRetrieval(table=table, column=[], conditions=conditions)
+        rows_to_delete = self.storage_manager.read_block(dr)
+        
+        if rows_to_delete.data:
+            fk_error = self._handle_fk_on_delete(table, rows_to_delete.data)
+            if fk_error:
+                return Rows(data=[], rows_count=0, message=f"Error: {fk_error}")
 
         dd = DataDeletion(table=table, conditions=conditions,
                           transaction_id=self.current_transaction_id)
@@ -1005,13 +967,184 @@ class QueryProcessor:
                 result.extend(self._flatten_expression(node.childs[0]))
                 result.append(node.val)
                 if len(node.childs) > 1:
-                    result.extend(self._flatten_expression(node.childs[1]))
+                    result.extend(self._flatten_expression(node.childs[1]))        
         return result
 
     # tektok sama SM, DDL (bonus)
 
-    def _create_table(self, node) -> Rows:
+    def _parse_create_table_sql(self, query: str) -> dict:
+        """
+        Parse CREATE TABLE SQL directly to support constraints.
+        Format: CREATE TABLE name (
+            col1 TYPE [PRIMARY KEY],
+            col2 TYPE [REFERENCES other_table(col) [ON DELETE CASCADE|RESTRICT]],
+            ...
+            [PRIMARY KEY (col1, col2, ...)],
+            [FOREIGN KEY (col) REFERENCES other_table(ref_col) [ON DELETE CASCADE|RESTRICT]]
+        );
+        """
+        import re
+        
+        # Extract table name and column definitions
+        match = re.match(
+            r'CREATE\s+TABLE\s+(\w+)\s*\(\s*(.+)\s*\)\s*;?\s*$',
+            query.strip(),
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        if not match:
+            return None
+        
+        table_name = match.group(1)
+        col_defs_str = match.group(2)
+        
+        # Split by comma, but handle nested parentheses
+        parts = self._split_column_defs(col_defs_str)
+        
+        columns = []
+        table_constraints = []  # For table-level PRIMARY KEY and FOREIGN KEY
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            
+            part_upper = part.upper()
+            
+            # Table-level PRIMARY KEY constraint
+            if part_upper.startswith("PRIMARY KEY"):
+                pk_match = re.match(r'PRIMARY\s+KEY\s*\(\s*(.+?)\s*\)', part, re.IGNORECASE)
+                if pk_match:
+                    pk_cols = [c.strip() for c in pk_match.group(1).split(',')]
+                    table_constraints.append({"type": "primary_key", "columns": pk_cols})
+                continue
+            
+            # Table-level FOREIGN KEY constraint
+            if part_upper.startswith("FOREIGN KEY"):
+                fk_match = re.match(
+                    r'FOREIGN\s+KEY\s*\(\s*(\w+)\s*\)\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)'
+                    r'(?:\s+ON\s+DELETE\s+(CASCADE|RESTRICT))?',
+                    part,
+                    re.IGNORECASE
+                )
+                if fk_match:
+                    table_constraints.append({
+                        "type": "foreign_key",
+                        "column": fk_match.group(1),
+                        "ref_table": fk_match.group(2),
+                        "ref_column": fk_match.group(3),
+                        "on_delete": (fk_match.group(4) or "restrict").lower()
+                    })
+                continue
+            
+            # Column definition
+            col_def = self._parse_column_definition(part)
+            if col_def:
+                columns.append(col_def)
+        
+        # Apply table-level constraints to columns
+        for constraint in table_constraints:
+            if constraint["type"] == "primary_key":
+                for col_name in constraint["columns"]:
+                    for col in columns:
+                        if col["name"].lower() == col_name.lower():
+                            col["primary_key"] = True
+            elif constraint["type"] == "foreign_key":
+                for col in columns:
+                    if col["name"].lower() == constraint["column"].lower():
+                        col["foreign_key"] = {
+                            "table": constraint["ref_table"],
+                            "column": constraint["ref_column"],
+                            "on_delete": constraint["on_delete"]
+                        }
+        
+        return {
+            "table_name": table_name,
+            "columns": columns
+        }
+    
+    def _split_column_defs(self, col_defs_str: str) -> List[str]:
+        """Split column definitions by comma, handling nested parentheses."""
+        parts = []
+        current = ""
+        depth = 0
+        
+        for char in col_defs_str:
+            if char == '(':
+                depth += 1
+                current += char
+            elif char == ')':
+                depth -= 1
+                current += char
+            elif char == ',' and depth == 0:
+                parts.append(current.strip())
+                current = ""
+            else:
+                current += char
+        
+        if current.strip():
+            parts.append(current.strip())
+        
+        return parts
+    
+    def _parse_column_definition(self, col_def: str) -> dict:
+        """Parse a single column definition."""
+        import re
+        
+        # Pattern: col_name TYPE[(length)] [PRIMARY KEY] [REFERENCES table(col) [ON DELETE action]]
+        pattern = re.compile(
+            r'^(\w+)\s+'  # column name
+            r'(INT|INTEGER|FLOAT|CHAR|VARCHAR)'  # type
+            r'(?:\s*\(\s*(\d+)\s*\))?'  # optional length
+            r'(\s+PRIMARY\s+KEY)?'  # optional inline PRIMARY KEY
+            r'(?:\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)'  # optional REFERENCES
+            r'(?:\s+ON\s+DELETE\s+(CASCADE|RESTRICT))?)?',  # optional ON DELETE
+            re.IGNORECASE
+        )
+        
+        match = pattern.match(col_def.strip())
+        if not match:
+            return None
+        
+        col_name = match.group(1)
+        col_type = match.group(2).lower()
+        if col_type == "integer":
+            col_type = "int"
+        
+        length = int(match.group(3)) if match.group(3) else None
+        if length is None:
+            if col_type in ["int", "float"]:
+                length = 4 if col_type == "int" else 8
+            else:
+                length = 50  # default for char/varchar
+        
+        column = {
+            "name": col_name,
+            "type": col_type,
+            "length": length
+        }
+        
+        # Inline PRIMARY KEY
+        if match.group(4):
+            column["primary_key"] = True
+        
+        # Inline FOREIGN KEY (REFERENCES)
+        if match.group(5):
+            column["foreign_key"] = {
+                "table": match.group(5),
+                "column": match.group(6),
+                "on_delete": (match.group(7) or "restrict").lower()
+            }
+        
+        return column
 
+    def _create_table(self, node) -> Rows:
+        """
+        Handle CREATE TABLE with PRIMARY KEY and FOREIGN KEY constraints.
+        """
+        # First, try to get raw query and parse it ourselves for constraint support
+        # This is needed because Query Optimizer doesn't fully parse constraints
+        
         table_name = None
         column_defs_node = None
 
@@ -1025,23 +1158,121 @@ class QueryProcessor:
             return Rows(data=[], rows_count=0, message="Invalid CREATE TABLE syntax")
 
         columns = []
+        table_pk_columns = []  # For table-level PRIMARY KEY
+        table_fk_constraints = []  # For table-level FOREIGN KEY
+        
         for col_def in column_defs_node.childs:
             if col_def.type == QueryTypes.COLUMN_DEF:
                 col_name = col_def.val
-                col_type = col_def.childs[0].val if col_def.childs else "INT"
+                col_type_str = col_def.childs[0].val if col_def.childs else "INT"
 
-                if "(" in col_type:
-                    type_name = col_type.split("(")[0].lower()
-                    length = int(col_type.split("(")[1].rstrip(")"))
+                if "(" in col_type_str:
+                    type_name = col_type_str.split("(")[0].lower()
+                    length = int(col_type_str.split("(")[1].rstrip(")"))
                 else:
-                    type_name = col_type.lower()
-                    length = 4 if type_name in ["int", "float"] else 50
+                    type_name = col_type_str.lower()
+                    if type_name == "integer":
+                        type_name = "int"
+                    length = 4 if type_name == "int" else (8 if type_name == "float" else 50)
 
-                columns.append({
+                column = {
                     "name": col_name,
                     "type": type_name,
                     "length": length
-                })
+                }                  
+                # Check for inline constraints in child nodes
+                for constraint_node in col_def.childs[1:]:
+                    if hasattr(constraint_node, 'type'):
+                        if constraint_node.type == QueryTypes.PRIMARY_KEY_CONSTRAINT or \
+                           (hasattr(constraint_node, 'val') and str(constraint_node.val).upper() == "PRIMARY KEY"):
+                            column["primary_key"] = True
+                        elif constraint_node.type == QueryTypes.FOREIGN_KEY_CONSTRAINT or \
+                             (hasattr(constraint_node, 'val') and "REFERENCES" in str(constraint_node.val).upper()):
+                            # Parse REFERENCES from inline FK constraint
+                            # Structure: childs[0] = REFERENCES_TABLE, childs[1] = REFERENCES_COLUMN, childs[2] = ON DELETE action
+                            if hasattr(constraint_node, 'childs') and constraint_node.childs:
+                                ref_table_node = constraint_node.childs[0] if len(constraint_node.childs) > 0 else None
+                                ref_col_node = constraint_node.childs[1] if len(constraint_node.childs) > 1 else None
+                                on_delete_node = constraint_node.childs[2] if len(constraint_node.childs) > 2 else None
+                                
+                                ref_table = ref_table_node.val if ref_table_node and hasattr(ref_table_node, 'val') else ""
+                                ref_col = ref_col_node.val if ref_col_node and hasattr(ref_col_node, 'val') else col_name
+                                on_delete = on_delete_node.val.lower() if on_delete_node and hasattr(on_delete_node, 'val') else "restrict"
+                                
+                                column["foreign_key"] = {
+                                    "table": ref_table,
+                                    "column": ref_col,
+                                    "on_delete": on_delete
+                                }
+                        elif hasattr(constraint_node, 'val') and str(constraint_node.val).upper() == "PRIMARY_KEY":
+                            column["primary_key"] = True
+                
+                columns.append(column)
+                # Table-level constraints
+            elif col_def.type == QueryTypes.PRIMARY_KEY_CONSTRAINT:
+                if col_def.childs:
+                    table_pk_columns = [c.val for c in col_def.childs]
+            elif col_def.type == QueryTypes.FOREIGN_KEY_CONSTRAINT:
+                if col_def.childs:
+                    fk_col = col_def.childs[0].val if col_def.childs else None
+                    ref_table = col_def.val if hasattr(col_def, 'val') else None
+                    ref_col = col_def.childs[1].val if len(col_def.childs) > 1 else fk_col
+                    on_delete = "restrict"
+                    if len(col_def.childs) > 2:
+                        on_delete = col_def.childs[2].val.lower() if col_def.childs[2].val else "restrict"
+                    table_fk_constraints.append({
+                        "column": fk_col,
+                        "ref_table": ref_table,
+                        "ref_column": ref_col,
+                        "on_delete": on_delete
+                    })
+        
+        # Apply table-level PRIMARY KEY
+        for pk_col in table_pk_columns:
+            for col in columns:
+                if col["name"].lower() == pk_col.lower():
+                    col["primary_key"] = True
+        
+        # Apply table-level FOREIGN KEY
+        for fk in table_fk_constraints:
+            for col in columns:
+                if col["name"].lower() == fk["column"].lower():
+                    col["foreign_key"] = {
+                        "table": fk["ref_table"],
+                        "column": fk["ref_column"],
+                        "on_delete": fk["on_delete"]
+                    }
+        
+        # Validate foreign key references exist
+        for col in columns:
+            if col.get("foreign_key"):
+                fk = col["foreign_key"]
+                ref_table = fk["table"]
+                ref_column = fk["column"]
+                
+                # Check if referenced table exists
+                try:
+                    ref_schema_file = self.storage_manager._get_schema_path(ref_table)
+                    with open(ref_schema_file, "rb") as f:
+                        ref_schema = self.storage_manager.serializer.deserialize_schema(f.read())
+                    
+                    # Check if referenced column exists and is primary key
+                    ref_col_found = False
+                    for ref_col in ref_schema["columns"]:
+                        if ref_col["name"].lower() == ref_column.lower():
+                            ref_col_found = True
+                            if not ref_col.get("primary_key", False):
+                                # Warning: referenced column is not a primary key
+                                # For now, just continue (some DBs allow this)
+                                pass
+                            break
+                    
+                    if not ref_col_found:
+                        return Rows(data=[], rows_count=0, 
+                                    message=f"Error: Referenced column '{ref_column}' not found in table '{ref_table}'")
+                except FileNotFoundError:
+                    return Rows(data=[], rows_count=0, 
+                                message=f"Error: Referenced table '{ref_table}' does not exist")
 
         schema = {
             "table_name": table_name,
@@ -1051,7 +1282,23 @@ class QueryProcessor:
         try:
             self._validate_ccm(table_name, "write")
             self.storage_manager.write_table(table_name, schema)
-            return Rows(data=[], rows_count=0, message=f"Table '{table_name}' created successfully")
+            
+            # Build success message with constraint info
+            pk_cols = [c["name"] for c in columns if c.get("primary_key")]
+            fk_cols = [c["name"] for c in columns if c.get("foreign_key")]
+            
+            msg = f"Table '{table_name}' created successfully"
+            if pk_cols:
+                msg += f" with PRIMARY KEY({', '.join(pk_cols)})"
+            if fk_cols:
+                fk_details = []
+                for c in columns:
+                    if c.get("foreign_key"):
+                        fk = c["foreign_key"]
+                        fk_details.append(f"{c['name']} -> {fk['table']}({fk['column']}) ON DELETE {fk['on_delete'].upper()}")
+                msg += f", FOREIGN KEY: {', '.join(fk_details)}"
+            
+            return Rows(data=[], rows_count=0, message=msg)
         except FileExistsError as e:
             return Rows(data=[], rows_count=0, message=f"Error: {str(e)}")
         except Exception as e:
@@ -1063,19 +1310,202 @@ class QueryProcessor:
         for child in node.childs:
             if child.type == QueryTypes.TABLE:
                 table_name = child.val
-                break
-
+                break        
         if not table_name:
             return Rows(data=[], rows_count=0, message="Invalid DROP TABLE syntax")
 
         try:
             self._validate_ccm(table_name, "write")
+              # Check for dependent tables (other tables that reference this table via FK)
+            dependent_tables = self._find_dependent_tables(table_name)
+            
+            if dependent_tables:
+                # Check if any dependent table with RESTRICT has actual referencing rows
+                for dep_table, dep_info in dependent_tables:
+                    if dep_info["on_delete"] == "restrict":
+                        # Check if there are actual rows in the dependent table referencing this table
+                        try:
+                            dr = DataRetrieval(table=dep_table, column=[dep_info["fk_column"]], conditions=[])
+                            dep_rows = self.storage_manager.read_block(dr)
+                            if dep_rows.rows_count > 0:
+                                return Rows(data=[], rows_count=0, 
+                                            message=f"Error: Cannot drop table '{table_name}' - {dep_rows.rows_count} row(s) in table '{dep_table}' reference this table")
+                        except Exception as e:
+                            print(f"[QP] Warning: Error checking dependent table {dep_table}: {e}")
+                
+                # Handle CASCADE: Drop dependent tables first or remove FK constraints
+                # For simplicity, we'll just warn about dependent tables with CASCADE
+                cascade_tables = [t for t, info in dependent_tables if info["on_delete"] == "cascade"]
+                if cascade_tables:
+                    # Delete all rows in dependent tables that reference this table
+                    for dep_table, dep_info in dependent_tables:
+                        if dep_info["on_delete"] == "cascade":
+                            # Read all data from the table being dropped
+                            try:
+                                dr = DataRetrieval(table=table_name, column=[], conditions=[])
+                                parent_rows = self.storage_manager.read_block(dr)
+                                  # For each parent row, delete referencing rows in dependent table
+                                for parent_row in parent_rows.data:
+                                    parent_pk_value = self._get_case_insensitive(
+                                        parent_row, dep_info["ref_column"], value_only=True)
+                                    if parent_pk_value is not None:
+                                        # Delete rows in dependent table where FK = parent PK
+                                        del_conditions = [Condition(
+                                            column=dep_info["fk_column"],
+                                            operation="=",
+                                            operand=parent_pk_value
+                                        )]
+                                        dd = DataDeletion(table=dep_table, conditions=del_conditions,
+                                                          transaction_id=self.current_transaction_id)
+                                        self.storage_manager.delete_block(dd)
+                            except Exception as e:
+                                print(f"[QP] Warning: Error cascading delete to {dep_table}: {e}")
+            
             self.storage_manager.delete_table(table_name)
             return Rows(data=[], rows_count=0, message=f"Table '{table_name}' dropped successfully")
         except FileNotFoundError as e:
             return Rows(data=[], rows_count=0, message=f"Error: {str(e)}")
         except Exception as e:
             return Rows(data=[], rows_count=0, message=f"Error dropping table: {str(e)}")
+
+    def _find_dependent_tables(self, table_name: str) -> List[tuple]:
+        """
+        Find all tables that have foreign keys referencing the given table.
+        Returns list of (table_name, fk_info) tuples.
+        """
+        import os
+        import glob
+        
+        dependent_tables = []
+        data_dir = self.storage_manager.data_dir or self.storage_manager.DATA_FOLDER
+        schema_pattern = os.path.join(data_dir, "*_schema.dat")
+        
+        for schema_file in glob.glob(schema_pattern):
+            try:
+                with open(schema_file, "rb") as f:
+                    schema = self.storage_manager.serializer.deserialize_schema(f.read())
+                
+                # Skip the table being dropped
+                if schema["table_name"].lower() == table_name.lower():
+                    continue
+                
+                # Check each column for FK referencing our table
+                for col in schema["columns"]:
+                    if col.get("foreign_key"):
+                        fk = col["foreign_key"]
+                        if fk["table"].lower() == table_name.lower():
+                            dependent_tables.append((schema["table_name"], {
+                                "fk_column": col["name"],
+                                "ref_column": fk["column"],
+                                "on_delete": fk.get("on_delete", "restrict")
+                            }))
+            except Exception as e:
+                print(f"[QP] Warning: Error reading schema {schema_file}: {e}")
+                continue
+        return dependent_tables
+
+    def _validate_fk_on_insert(self, schema_dict: dict, new_row: dict) -> Optional[str]:
+        """
+        Validate foreign key constraints when inserting a new row.
+        Returns error message if FK constraint is violated, None if OK.
+        """
+        for col in schema_dict["columns"]:
+            if col.get("foreign_key"):
+                fk = col["foreign_key"]
+                fk_column = col["name"]
+                ref_table = fk["table"]
+                ref_column = fk["column"]
+                
+                # Get the FK value from the new row
+                fk_value = new_row.get(fk_column)
+                if fk_value is None:
+                    # Try case-insensitive lookup
+                    for k, v in new_row.items():
+                        if k.lower() == fk_column.lower():
+                            fk_value = v
+                            break
+                
+                if fk_value is None:
+                    continue  # No value provided, skip validation
+                
+                # Check if the referenced value exists in the parent table
+                try:
+                    conditions = [Condition(column=ref_column, operation="=", operand=fk_value)]
+                    dr = DataRetrieval(table=ref_table, column=[ref_column], conditions=conditions)
+                    result = self.storage_manager.read_block(dr)
+                    
+                    if result.rows_count == 0:
+                        return f"Foreign key constraint violation: Value '{fk_value}' for column '{fk_column}' " \
+                               f"does not exist in referenced table '{ref_table}' column '{ref_column}'"
+                except FileNotFoundError:
+                    return f"Foreign key constraint error: Referenced table '{ref_table}' does not exist"
+                except Exception as e:
+                    return f"Foreign key constraint error: {str(e)}"
+        
+        return None  # All FK constraints satisfied
+
+    def _handle_fk_on_delete(self, table: str, rows_to_delete: List[dict]) -> Optional[str]:
+        """
+        Handle foreign key constraints when deleting rows from a parent table.
+        - RESTRICT: Prevent delete if child rows exist
+        - CASCADE: Delete child rows automatically
+        Returns error message if RESTRICT blocks delete, None if OK.
+        """
+        if not rows_to_delete:
+            return None
+        
+        # Get schema of the table being deleted from
+        try:
+            schema_file = self.storage_manager._get_schema_path(table)
+            with open(schema_file, "rb") as f:
+                schema = self.storage_manager.serializer.deserialize_schema(f.read())
+        except FileNotFoundError:
+            return None  # Table doesn't exist, nothing to check
+        
+        # Find primary key columns
+        pk_columns = [col["name"] for col in schema["columns"] if col.get("primary_key", False)]
+        if not pk_columns:
+            pk_columns = [schema["columns"][0]["name"]]
+        
+        # Find all tables that reference this table via FK
+        dependent_tables = self._find_dependent_tables(table)
+        if not dependent_tables:
+            return None  # No dependent tables
+        
+        for row in rows_to_delete:
+            # Get PK value(s) from the row being deleted
+            for pk_col in pk_columns:
+                pk_value = self._get_case_insensitive(row, pk_col, value_only=True)
+                
+                if pk_value is None:
+                    continue
+                
+                # Check each dependent table
+                for dep_table, dep_info in dependent_tables:
+                    fk_column = dep_info["fk_column"]
+                    on_delete = dep_info.get("on_delete", "restrict")
+                    
+                    # Check if any child rows reference this PK value
+                    try:
+                        conditions = [Condition(column=fk_column, operation="=", operand=pk_value)]
+                        dr = DataRetrieval(table=dep_table, column=[fk_column], conditions=conditions)
+                        child_rows = self.storage_manager.read_block(dr)
+                        
+                        if child_rows.rows_count > 0:
+                            if on_delete == "restrict":
+                                return f"Foreign key constraint violation: Cannot delete from '{table}' - " \
+                                       f"{child_rows.rows_count} row(s) in table '{dep_table}' reference this record"
+                            elif on_delete == "cascade":
+                                # Delete child rows
+                                dd = DataDeletion(table=dep_table, conditions=conditions,
+                                                  transaction_id=self.current_transaction_id)
+                                deleted_count = self.storage_manager.delete_block(dd)
+                                print(f"[QP] CASCADE DELETE: Removed {deleted_count} row(s) from '{dep_table}'")
+                    except Exception as e:
+                        print(f"[QP] Warning: Error checking FK constraint on {dep_table}: {e}")
+                        continue
+        
+        return None  # All FK constraints handled
 
     # evaluasi kondisi
 

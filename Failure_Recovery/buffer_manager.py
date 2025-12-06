@@ -57,8 +57,10 @@ class BufferManager:
         found_row = None
         for row_data in table_obj.data:
             is_match = True
+            # Create lowercase version of row_data keys for comparison
+            row_data_lower = {k.lower(): v for k, v in row_data.items()}
             for k, v in pk_value.items():
-                if row_data.get(k) != v:
+                if row_data_lower.get(k.lower()) != v:
                     is_match = False
                     break
             if is_match:
@@ -183,10 +185,13 @@ class BufferManager:
             for disk_row in current_disk_data:
                 updated_row = disk_row
                 should_keep = True
+                # Create lowercase version of disk_row keys for comparison
+                disk_row_lower = {k.lower(): v for k, v in disk_row.items()}
                 for buf_row in buffer_updates:
                     is_match = True
                     for k, v in buf_row.primary_key_value.items():
-                        if disk_row.get(k) != v:
+                        # Compare with lowercase keys
+                        if disk_row_lower.get(k.lower()) != v:
                             is_match = False
                             break
 

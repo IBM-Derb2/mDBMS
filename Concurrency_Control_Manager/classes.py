@@ -58,12 +58,13 @@ class ConcurrencyControlManager:
         self.frm.get_log_history_manager().log_commit(transaction_id)
         self.frm.write_log_entry(transaction_id, WalAction.COMMIT)
 
-        # Save checkpoint with current active transactions
+        # Remove from active transactions first
+        self.frm.notify_transaction_end(transaction_id)
+
+        # Save checkpoint with current active transactions (after removal)
         with self.frm.lock:
             ongoing_transactions = list(self.frm.active_transactions)
         self.frm.save_checkpoint(ongoing_transactions)
-
-        self.frm.notify_transaction_end(transaction_id)
 
     def abort_transaction(self, transaction_id: int, reason: str = "User requested"):
         self.coordinator.abort(transaction_id, reason)
@@ -100,6 +101,14 @@ class ConcurrencyControlManager:
         return stats
 
     def set_concurrency_mechanism(self, mechanism: str):
+        # CRITICAL: Check if there are active transactions
+        stats = self.tx_manager.get_statistics()
+        if stats.get("active", 0) > 0:
+            raise Exception(
+                f"Cannot change concurrency mechanism: {stats['active']} active transaction(s) in progress. "
+                "Please COMMIT or ROLLBACK all transactions first."
+            )
+        
         strategies = {
             "lock-based": LockBasedStrategy,
             "timestamp-based": TimestampBasedStrategy,

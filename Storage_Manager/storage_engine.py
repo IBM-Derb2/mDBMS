@@ -295,14 +295,17 @@ class StorageEngine:
                         f"Primary key violation: Record with {pk_values} already exists in table '{table}'"
                     )
 
-            # cek duplikasi di buffer
+            # cek duplikasi di buffer (skip deleted rows)
             pk_value_dict = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
-            buffered_row = self.frm.get_buffered_row(table, pk_value_dict)
-            if buffered_row is not None:
-                pk_values = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
-                raise ValueError(
-                    f"Primary key violation: Record with {pk_values} already exists in buffer for table '{table}'"
-                )
+            # Check if row exists in buffer and is not deleted
+            buffer_key = self.frm.buffer_manager._get_buffer_key(table, pk_value_dict)
+            if buffer_key in self.frm.buffer_manager.buffer_data:
+                buffered_row_obj = self.frm.buffer_manager.buffer_data[buffer_key]
+                if not buffered_row_obj.is_deleted:
+                    pk_values = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
+                    raise ValueError(
+                        f"Primary key violation: Record with {pk_values} already exists in buffer for table '{table}'"
+                    )
 
             pk_value_dict = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
 
@@ -448,8 +451,42 @@ class StorageEngine:
         if not pk_columns:
             pk_columns = [schema_dict["columns"][0]["name"]]
 
-        all_rows = self.serializer.deserialize_with_blocks(
+        disk_rows = self.serializer.deserialize_with_blocks(
             data_binary, schema_columns)
+
+        # Merge buffer with disk to include uncommitted inserts
+        buffered_rows_map = {}
+        deleted_pk_tuples = set()
+
+        for key, buffered_row in self.frm.buffer_manager.buffer_data.items():
+            if buffered_row.table_name == table_name:
+                pk_tuple = tuple(sorted(buffered_row.primary_key_value.items()))
+                if buffered_row.is_deleted:
+                    deleted_pk_tuples.add(pk_tuple)
+                else:
+                    buffered_rows_map[pk_tuple] = buffered_row.data
+
+        # Merge disk rows with buffer
+        all_rows = []
+        processed_buffer_keys = set()
+
+        for disk_row in disk_rows:
+            pk_value = {pk_col: disk_row[pk_col] for pk_col in pk_columns}
+            pk_tuple = tuple(sorted(pk_value.items()))
+
+            if pk_tuple in deleted_pk_tuples:
+                continue  # Skip rows marked as deleted in buffer
+            elif pk_tuple in buffered_rows_map:
+                all_rows.append(buffered_rows_map[pk_tuple])  # Use buffer version
+                processed_buffer_keys.add(pk_tuple)
+            else:
+                all_rows.append(disk_row)  # Use disk version
+
+        # Add buffer-only rows (inserts not yet on disk)
+        for pk_tuple, buffered_data in buffered_rows_map.items():
+            if pk_tuple not in processed_buffer_keys:
+                all_rows.append(buffered_data)
+
         if not all_rows:
             return 0
 
@@ -640,8 +677,8 @@ class StorageEngine:
             schema = self.serializer.deserialize_schema(schema_bin)
 
             with open(data_path, "rb") as f:
-                existing_data_bin = f.read()
-            existing_rows = self.serializer.deserialize_with_blocks(
+                existing_data_bin = f.read()            
+                existing_rows = self.serializer.deserialize_with_blocks(
                 existing_data_bin, schema["columns"])
 
             pk_columns = [col["name"] for col in schema["columns"]
@@ -651,19 +688,25 @@ class StorageEngine:
 
             buffer_rows_map = {}
             for row in table.data:
-                pk_tuple = tuple(row.get(pk_col) for pk_col in pk_columns)
+                # Normalize to lowercase for consistent comparison
+                pk_tuple = tuple(row.get(pk_col.lower(), row.get(pk_col)) for pk_col in pk_columns)
                 buffer_rows_map[pk_tuple] = row
 
             # Get deleted keys from buffer (if available)
-            deleted_keys = set(table.deleted_keys)
+            # deleted_keys contains tuples of PK values
+            deleted_keys_set = set()
+            for dk in table.deleted_keys:
+                # dk is already a tuple of values
+                deleted_keys_set.add(dk)
 
             # merge buffer dengan disk atau tulis ulang
             merged_rows = []
             for existing_row in existing_rows:
-                pk_tuple = tuple(existing_row.get(pk_col)
+                # Normalize to lowercase for consistent comparison
+                pk_tuple = tuple(existing_row.get(pk_col.lower(), existing_row.get(pk_col))
                                  for pk_col in pk_columns)
                 # Skip rows that were deleted in buffer
-                if pk_tuple in deleted_keys:
+                if pk_tuple in deleted_keys_set:
                     continue
                 if pk_tuple in buffer_rows_map:
                     merged_rows.append(buffer_rows_map[pk_tuple])
@@ -718,15 +761,20 @@ class StorageEngine:
             return float(value)
         raise ValueError(
             f"Type mismatch: expected {col_type_name}, got {type(value).__name__}"
-        )
-
+        )    
     def _matches_conditions(self, row: dict, conditions: List) -> bool:
 
         if not conditions:
             return True
 
         for condition in conditions:
-            column_value = row.get(condition.column)
+            # Case-insensitive column lookup
+            column_value = None
+            col_lower = condition.column.lower()
+            for k, v in row.items():
+                if k.lower() == col_lower:
+                    column_value = v
+                    break
 
             if column_value is None:
                 return False
