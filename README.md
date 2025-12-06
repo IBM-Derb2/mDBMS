@@ -8,6 +8,7 @@
     <img width="600px" src="https://github.com/user-attachments/assets/9eb1b38b-474c-4197-8754-d137893dd712">
 </p>
 
+
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/DBMS-active-green?logo=databricks&logoColor=white" alt="DBMS"/>
@@ -30,7 +31,7 @@
 
 <div align="center">
 
-<img src="https://github.com/user-attachments/assets/a8dfe803-cacc-4598-a323-315b41b5033a" width="100%" alt="cover">
+<img src="https://github.com/user-attachments/assets/1e174a4d-b1da-4724-8e20-9212799b16ca" width="100%" alt="cover">
 
 </div>
 
@@ -234,7 +235,7 @@ Ensures database consistency and durability through crash recovery and transacti
 
    ```sql
    IBM-Derb2> SELECT * FROM attends;
-   IBM-Derb2> SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'
+   IBM-Derb2> SELECT * FROM student s, attends a WHERE s.studentid = a.studentid ORDER BY gpa ASC LIMIT 10;
    ```
 
    B. Do Transaction
