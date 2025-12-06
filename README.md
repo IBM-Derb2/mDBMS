@@ -1,7 +1,9 @@
 # Mini DBMS by IBM Derb2
+
 > Yes, mDBMS from scratch.
-> 
-<br>
+>
+> <br>
+
 <p align="center">
     <img width="600px" src="https://github.com/user-attachments/assets/9eb1b38b-474c-4197-8754-d137893dd712">
 </p>
@@ -21,6 +23,7 @@
 - [Requirements](#requirements)
 - [Running the mDBMS](#running-the-mdbms)
 - [Creators](#creators)
+
 ---
 
 # The mDBMS <a name="mdbms"></a>
@@ -559,7 +562,7 @@ b_plus_tree_index.py, hash_index.py,</td>
             </a><br/>
             </div>
         </td>
-        <td>Inisialisasi global types dan constants, merge, tree parser, tokenizer, internal get_cost, cost integration</td>
+        <td>Inisialisasi global types dan constants, merge, tree parser, tokenizer, internal get_cost, cost integration, optimizer</td>
     </tr>
     <tr align="left">
         <td>13523082</td>
