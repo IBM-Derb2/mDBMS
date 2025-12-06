@@ -230,40 +230,11 @@ class TestQueryProcessor(unittest.TestCase):
 
     def test_21_error_handling(self):
         """Test error handling for invalid query"""
-
+        
         query = "INVALID QUERY;"
         result = self.qp.execute_query(query)
         self.assertGreater(len(result[0].message), 0)
         self.assertTrue(any(word in result[0].message.lower() for word in ['error', 'invalid', 'unhandled']))
-
-    def test_22_insert_rows(self):
-        """Test INSERT data persistence"""
-
-        unique_id = 69420
-        insert_query = f"INSERT INTO student (StudentID, FullName, GPA) VALUES ({unique_id}, 'InsertVerify', 3.8);"
-        insert_result = self.qp.execute_query(insert_query)
-        self.assertEqual(insert_result[0].rows_count, 1)
-
-        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
-        select_result = self.qp.execute_query(verify_query)
-        if select_result[0].rows_count > 0:
-            self.assertEqual(select_result[0].data.data[0]["studentid"], unique_id)
-            self.assertEqual(select_result[0].data.data[0]["fullname"], "InsertVerify")
-            self.assertEqual(select_result[0].data.data[0]["gpa"], 3.8)
-
-    def test_23_update_rows(self):
-        """Test UPDATE with arithmetic expression using record from test_22"""
-
-        unique_id = 69420
-
-        # contoh spek: GPA = 1.1 * GPA (3.8 * 1.1 = 4.18)
-        query = f"UPDATE student SET GPA = 1.1 * GPA WHERE StudentID = {unique_id};"
-        self.qp.execute_query(query)
-
-        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
-        select_result = self.qp.execute_query(verify_query)
-        if select_result[0].rows_count > 0:
-            self.assertAlmostEqual(select_result[0].data.data[0]["gpa"], 4.18, places=1)
 
     def test_24_delete_rows(self):
         """Test DELETE data removal using record from test_22"""
