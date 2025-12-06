@@ -10,6 +10,7 @@ from Concurrency_Control_Manager.lib.transaction_model import TransactionManager
 from Concurrency_Control_Manager.lib.transaction_coordinator import TransactionCoordinator
 from Concurrency_Control_Manager.lib.deadlock_detector import DeadlockDetector
 from Concurrency_Control_Manager.lib.transaction_id_generator import TransactionIdGenerator
+from Failure_Recovery.types import WalAction
 
 
 class ConcurrencyControlManager:
@@ -37,7 +38,6 @@ class ConcurrencyControlManager:
 
         self.frm.get_log_history_manager().log_start(tx_id)
         self.frm.notify_transaction_start(tx_id)
-        from Failure_Recovery.frm_types import WalAction
         self.frm.write_log_entry(tx_id, WalAction.START)
 
         return tx_id
@@ -56,7 +56,6 @@ class ConcurrencyControlManager:
         self.coordinator.commit(transaction_id)
 
         self.frm.get_log_history_manager().log_commit(transaction_id)
-        from Failure_Recovery.frm_types import WalAction
         self.frm.write_log_entry(transaction_id, WalAction.COMMIT)
 
         # Flush dirty blocks to disk on commit
