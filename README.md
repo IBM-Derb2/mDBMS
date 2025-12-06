@@ -16,74 +16,88 @@
 - [Creators](#creators)
 
 ---
+
 # Description
 
 This project is a mini Database Management System (DBMS) implemented with Python with the following functionalities:
-1. Query Processing: SELECT FROM, UPDATE, JOIN ON, NATURAL JOIN, WHERE 
+
+1. Query Processing: SELECT FROM, UPDATE, JOIN ON, NATURAL JOIN, WHERE
 2. Query Optimization
 3. Storage Management
 4. Failure Recovery
 5. Concurrency Control
 
 ---
+
 # Technology
 
-* **Python 3.10+**
-* Uses only **standard Python libraries** (no external dependencies)
+- **Python 3.10+**
+- Uses only **standard Python libraries** (no external dependencies)
 
 ---
+
 # Requirements
 
-* **Python 3.10 or higher** installed
-* A terminal or command prompt to run the scripts
-* No additional packages or libraries required
+- **Python 3.10 or higher** installed
+- A terminal or command prompt to run the scripts
+- No additional packages or libraries required
 
 ---
+
 # Running the mDBMS
+
 1. Make executable scripts
-    ```bash
-    chmod +x sclient.sh
-    chmod +x sserver.sh
-    ```
+
+   ```bash
+   chmod +x sclient.sh
+   chmod +x sserver.sh
+   ```
 
 2. Run Client and Server
 
-    On a terminal start the server:
-    ```bash
-    ./sserver.sh
-    ```
+   On a terminal start the server:
 
-    and in a different terminal than server, run client:
-    ```bash
-    ./sclient.sh
-    ```
+   ```bash
+   ./sserver.sh
+   ```
+
+   and in a different terminal than server, run client:
+
+   ```bash
+   ./sclient.sh
+   ```
 
 3. Start running commands on Client
 
-    A. Do query
-    ```sql
-    IBM-Derb2> SELECT * FROM attends;
-    IBM-Derb2> SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'
-    ```
+   A. Do query
 
-    B. Do Transaction
-    ```sql
-    IBM-Derb2> BEGIN TRANSACTION;
-    IBM-Derb2> UPDATE student SET GPA = 0.0 WHERE StudentID = 13520001;
-    IBM-Derb2> ROLLBACK; -- or COMMIT
-    ```
+   ```sql
+   IBM-Derb2> SELECT * FROM attends;
+   IBM-Derb2> SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'PAID'
+   ```
 
-    C. Exit
-    ```bash
-    IBM-Derb2> exit
-    ```
+   B. Do Transaction
+
+   ```sql
+   IBM-Derb2> BEGIN TRANSACTION;
+   IBM-Derb2> UPDATE student SET GPA = 0.0 WHERE StudentID = 13520001;
+   IBM-Derb2> ROLLBACK; -- or COMMIT
+   ```
+
+   C. Exit
+
+   ```bash
+   IBM-Derb2> exit
+   ```
 
 ---
+
 # Creators
 
 ## Super Group IBM Derb2
 
 ### Swift Group - Query Processor
+
 <table>
     <tr align="left">
         <td><b>NIM</b></td>
@@ -158,7 +172,8 @@ This project is a mini Database Management System (DBMS) implemented with Python
     </tr>
 </table>
 
-### Kotlin Group - Storage Manager 
+### Kotlin Group - Storage Manager
+
 <table>
     <tr align="left">
         <td><b>NIM</b></td>
@@ -177,7 +192,8 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, refactor data folder, StorageEngine read_block(), class DataRetrieval, Fixing write_blocks(), UnitTest.py</td>
+        <td>Laporan, refactor data folder,
+StorageEngine read_block(), class DataRetrieval, fixing write_blocks(), UnitTest.py, _create_table(), _delete_table(),</td>
     </tr>
     <tr align="left">
         <td>13523006</td>
@@ -190,7 +206,8 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, StorageEngine get_stats(), class Statistics, UnitTest.py</td>
+        <td>Laporan, StorageEngine _evaluate_expression(), get_stats(), class Statistics,
+UnitTest.py, Interface untuk BufferManager</td>
     </tr>
     <tr align="left">
         <td>13523004</td>
@@ -203,7 +220,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, StorageEngine write_block(), class DataWrite, Serializer, Rows, Condition, UnitTest.py</td>
+        <td>Laporan, Integrasi dengan komponen lain, Skeleton client.py dan server.py, StorageEngine write_block(), class DataWrite, Serializer, Rows, Condition, UnitTest.py</td>
     </tr>
     <tr align="left">
         <td>13523096</td>
@@ -216,7 +233,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, Class Diagram, StorageEngine delete_block(), class DataDeletion, Persistensi Hash Index, UnitTest.py</td>
+        <td>Laporan, Diagram class, StorageEngine delete_block(), class DataDeletion, UnitTest.py</td>
     </tr>
     <tr align="left">
         <td>13523100</td>
@@ -229,11 +246,15 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, StorageEngine set_index(), Persistensi B+ Tree Index b_plus_tree_index.py, hash_index.py</td>
+        <td>Laporan, index.py,
+StorageEngine set_index(),
+_update_indexes(),
+b_plus_tree_index.py, hash_index.py,</td>
     </tr>
 </table>
 
 ### Java Group - Concurrency Control Manager
+
 <table>
     <tr align="left">
         <td><b>NIM</b></td>
@@ -296,6 +317,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
 </table>
 
 ### Haskell Group - Failure Recovery
+
 <table>
     <tr align="left">
         <td><b>NIM</b></td>
@@ -314,7 +336,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Bagian model log parser dan log entry, recovery, logika rollback, unit testing, laporan bagian testing dan penjelasan</td>
+        <td>Bagian model log parser dan log entry, recovery, logika rollback, unit testing, dan laporan</td>
     </tr>
     <tr align="left">
         <td>13523016</td>
@@ -353,11 +375,12 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Integrasi menjadi satu kelas, testing dan refactor buffer manager dan recovery, integrasi dengan komponen lain dan laporan</td>
+        <td>Integrasi menjadi satu kelas, testing dan refactor buffer manager dan recovery, integrasi dengan komponen lain, dan laporan</td>
     </tr>
 </table>
 
 ### Elixir Group - Query Optimizer
+
 <table>
     <tr align="left">
         <td><b>NIM</b></td>
@@ -376,7 +399,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Inisialisasi global types dan constants, merge.</td>
+        <td>Inisialisasi global types dan constants, merge, tree parser, tokenizer, internal get_cost, cost integration</td>
     </tr>
     <tr align="left">
         <td>13523082</td>
@@ -389,7 +412,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Refactor cost dengan global types dan constants.</td>
+        <td>Refactor cost dengan global types dan constants, bagian awal dari get_cost</td>
     </tr>
     <tr align="left">
         <td>13523080</td>
@@ -402,7 +425,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Refactor optimization dengan global types dan constants</td>
+        <td>Parse_query test and fix, push selection and push projection, refactor optimization, laporan</td>
     </tr>
     <tr align="left">
         <td>13523106</td>
@@ -415,6 +438,6 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Refactor parsers dengan global types dan constants.</td>
+        <td>DML test and fix, refactor parsers, diagram class, laporan.</td>
     </tr>
 </table>
