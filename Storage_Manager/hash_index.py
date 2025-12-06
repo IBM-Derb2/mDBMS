@@ -1,16 +1,18 @@
 from collections import defaultdict
-import pickle
 import os
 import sys
 
 if __name__ == "__main__":
     from serializer import Serializer
+    from index import Index
 else:
     from .serializer import Serializer
+    from .index import Index
 
 class HashIndex:
     def __init__(self):
         self.index = defaultdict(list)
+        self.index_serializer = Index()
 
     def insert(self, key: str, value: int):
         self.index[key].append(value)
@@ -27,14 +29,17 @@ class HashIndex:
     def save(self, filepath: str):
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'wb') as f:
-            pickle.dump(self.index, f)
+            binary_data = self.index_serializer.serialize_hash_index(dict(self.index))
+            f.write(binary_data)
 
     def load(self, filepath: str):
         if not os.path.exists(filepath):
             self.index = defaultdict(list)
             return
         with open(filepath, 'rb') as f:
-            self.index = pickle.load(f)
+            binary_data = f.read()
+            loaded_dict = self.index_serializer.deserialize_hash_index(binary_data)
+            self.index = defaultdict(list, loaded_dict)
 
     @staticmethod
     def _get_original_column_name(schema: dict, column: str) -> str:

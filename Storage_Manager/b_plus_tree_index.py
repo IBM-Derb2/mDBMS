@@ -1,12 +1,13 @@
 from typing import Union
-import pickle
 import os
 import sys
 
 if __name__ == "__main__":
     from serializer import Serializer
+    from index import Index
 else:
     from .serializer import Serializer
+    from .index import Index
 
 class BPlusTreeNode:
     def __init__(self, order, leaf=False):
@@ -25,6 +26,8 @@ class BPlusTreeIndex:
     def __init__(self, order=5):
         self.root = BPlusTreeNode(order, leaf=True)
         self.order = order
+        self.serializer = Serializer()
+        self.index_serializer = Index()
     
     def search(self, key):
         leaf = self._find_leaf(self.root, key)
@@ -116,7 +119,8 @@ class BPlusTreeIndex:
 
     def save(self, filename):
         with open(filename, "wb") as f:
-            pickle.dump(self.root, f)
+            binary_data = self.index_serializer.serialize_bplus_tree(self.root)
+            f.write(binary_data)
 
     def _rebuild_leaf_links(self, node=None):
         if node is None:
@@ -136,9 +140,11 @@ class BPlusTreeIndex:
 
     @staticmethod
     def load(filename):
+        index_serializer = Index()
         with open(filename, "rb") as f:
+            binary_data = f.read()
             tree = BPlusTreeIndex()
-            tree.root = pickle.load(f)
+            tree.root = index_serializer.deserialize_bplus_tree(binary_data)
             tree._rebuild_leaf_links()
             return tree
 
