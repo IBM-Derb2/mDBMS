@@ -59,16 +59,32 @@ class BPlusTreeIndex:
         
         return results if results else None
 
-    def search_range(self, start_key, end_key): 
-        results = []
-        leaf = self._find_leaf(self.root, start_key)
+    def search_range(self, start_key=None, end_key=None): 
 
+        results = []
+        
+        # Find the starting leaf
+        if start_key is not None:
+            leaf = self._find_leaf(self.root, start_key)
+        else:
+            # Start from the leftmost leaf
+            leaf = self.root
+            while not leaf.leaf:
+                leaf = leaf.children[0]
+
+        # Traverse leaves using linked list
         while leaf:
             for k, v in zip(leaf.keys, leaf.children):
-                if start_key <= k <= end_key:
-                    results.append((k, v))
-                if k > end_key:
+                # Skip keys below start_key
+                if start_key is not None and k < start_key:
+                    continue
+                # Stop if we've exceeded end_key
+                if end_key is not None and k > end_key:
                     return results
+                # Key is within range [start_key, end_key]
+                results.append(v)
+            
+            # Move to next leaf
             leaf = leaf.next
 
         return results
@@ -134,14 +150,15 @@ class BPlusTreeIndex:
         return None
 
     @staticmethod
-    def create(table: str, column: str, data_dir: str = "data", order: int = 5):
+    def create(table: str, column: str, data_dir: str = "", order: int = 5):
         serializer = Serializer()
 
-        schema_file = os.path.join(data_dir, f"{table}_schema.dat")
-        data_file = os.path.join(data_dir, f"{table}.dat")
+        base_path = os.path.join("data", data_dir) if data_dir else "data"
+        schema_file = os.path.join(base_path, f"{table}_schema.dat")
+        data_file = os.path.join(base_path, f"{table}.dat")
         
-        hash_index_file = os.path.join(data_dir, f"{table}_{column}_hash.dat")
-        btree_index_file = os.path.join(data_dir, f"{table}_{column}_btree.dat")
+        hash_index_file = os.path.join(base_path, f"{table}_{column}_hash.dat")
+        btree_index_file = os.path.join(base_path, f"{table}_{column}_btree.dat")
         index_file = btree_index_file
 
         if not os.path.exists(schema_file):
@@ -170,16 +187,23 @@ class BPlusTreeIndex:
 
         rows = serializer.deserialize_with_blocks(data, schema['columns'])
 
+        def normalize_key(value):
+            """Normalize key for consistent ordering: 2.5 -> '002.50'"""
+            if isinstance(value, (int, float)):
+                return f"{float(value):06.2f}"
+            return str(value)
+
         for idx, row in enumerate(rows):
-            key_value = str(row.get(original_col_name, ''))
+            key_value = normalize_key(row.get(original_col_name, ''))
             btree_index.insert(key_value, idx)
 
         btree_index.save(index_file)
         return index_file
 
     @staticmethod
-    def drop(table: str, column: str, data_dir: str = "data"):
-        index_file = os.path.join(data_dir, f"{table}_{column}_btree.dat")
+    def drop(table: str, column: str, data_dir: str = ""):
+        base_path = os.path.join("data", data_dir) if data_dir else "data"
+        index_file = os.path.join(base_path, f"{table}_{column}_btree.dat")
 
         if not os.path.exists(index_file):
             raise FileNotFoundError(f"B+ tree index does not exist for {table}.{column}")

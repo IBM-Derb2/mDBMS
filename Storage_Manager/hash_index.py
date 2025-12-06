@@ -44,14 +44,15 @@ class HashIndex:
         return None
 
     @staticmethod
-    def create(table: str, column: str, data_dir: str = "data"):
+    def create(table: str, column: str, data_dir: str = ""):
         serializer = Serializer()
 
-        schema_file = os.path.join(data_dir, f"{table}_schema.dat")
-        data_file = os.path.join(data_dir, f"{table}.dat")
+        base_path = os.path.join("data", data_dir) if data_dir else "data"
+        schema_file = os.path.join(base_path, f"{table}_schema.dat")
+        data_file = os.path.join(base_path, f"{table}.dat")
         
-        hash_index_file = os.path.join(data_dir, f"{table}_{column}_hash.dat")
-        btree_index_file = os.path.join(data_dir, f"{table}_{column}_btree.dat")
+        hash_index_file = os.path.join(base_path, f"{table}_{column}_hash.dat")
+        btree_index_file = os.path.join(base_path, f"{table}_{column}_btree.dat")
         index_file = hash_index_file
         
         if os.path.exists(hash_index_file):
@@ -80,16 +81,23 @@ class HashIndex:
 
         rows = serializer.deserialize_with_blocks(data, schema['columns'])
 
+        def normalize_key(value):
+            """Normalize key for consistent ordering: 2.5 -> '002.50'"""
+            if isinstance(value, (int, float)):
+                return f"{float(value):06.2f}"
+            return str(value)
+
         for idx, row in enumerate(rows):
-            key_value = str(row.get(original_col_name, ''))
+            key_value = normalize_key(row.get(original_col_name, ''))
             hash_index.insert(key_value, idx)
 
         hash_index.save(index_file)
         return index_file
 
     @staticmethod
-    def drop(table: str, column: str, data_dir: str = "data"):
-        index_file = os.path.join(data_dir, f"{table}_{column}_hash.dat")
+    def drop(table: str, column: str, data_dir: str = ""):
+        base_path = os.path.join("data", data_dir) if data_dir else "data"
+        index_file = os.path.join(base_path, f"{table}_{column}_hash.dat")
 
         if not os.path.exists(index_file):
             raise FileNotFoundError(f"Hash index does not exist for {table}.{column}")

@@ -7,6 +7,20 @@ class Serializer:
         self.block_size = 1024 # 1KB
         pass
 
+    def _normalize_row(self, row: dict) -> dict:
+
+        normalized = {}
+        for key, value in row.items():
+
+            norm_key = key.lower()
+
+            if isinstance(value, (int, float)):
+
+                normalized[norm_key] = value
+            else:
+                normalized[norm_key] = value
+        return normalized
+
     def deserialize_with_blocks(self, binary_data: bytes, columns: List[dict]) -> list:
         """
         desisialisasi data biner dengan alokasi blok menjadi baris.
@@ -104,20 +118,25 @@ class Serializer:
                 raise ValueError(f"Tipe kolom tidak didukung: {column['type']}")
         
         
+        # Normalize all rows before serialization (single point of truth)
+        normalized_rows = [self._normalize_row(row) for row in rows]
+        
         # binary_data = b""
-        for row in rows:
+        for row in normalized_rows:
             row_binary = bytearray()
             for column_name, column_type, offset, length in offsets:
+                # Use lowercase column name to access normalized row
+                col_key = column_name.lower()
                 if column_type == "int":
-                    row_binary += int(row[column_name]).to_bytes(4, byteorder="big")
+                    row_binary += int(row[col_key]).to_bytes(4, byteorder="big")
                 elif column_type == "varchar":
                     row_binary += b'\x01'  # penanda untuk varchar
-                    row_binary += row[column_name].encode().ljust(length, b"\x00")
+                    row_binary += row[col_key].encode().ljust(length, b"\x00")
                 elif column_type == "float":
-                    row_binary += struct.pack('d', row[column_name])
+                    row_binary += struct.pack('d', row[col_key])
                 elif column_type == "char":
                     row_binary += b'\x02'  # penanda untuk char
-                    row_binary += row[column_name].encode().ljust(length, b"\x00")
+                    row_binary += row[col_key].encode().ljust(length, b"\x00")
                 else:
                     raise ValueError(f"Tipe kolom tidak didukung: {column_type}")
 
@@ -162,7 +181,7 @@ class Serializer:
         # kolom
         for column in schema["columns"]:
             # nama kolom
-            column_name = column["name"]
+            column_name = column["name"].lower()
             binary_data.extend(column_name.encode('utf-8'))
             binary_data.append(0)  # Null terminator
 
