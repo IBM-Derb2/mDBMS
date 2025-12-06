@@ -37,9 +37,7 @@ class BufferManager:
         # Memindahkan key yang baru diakses ke belakang list (Most Recently Used).
         if key in self.lru_order:
             self.lru_order.remove(key)
-        self.lru_order.append(key) # Key baru diakses ditambah di akhir
-
-    # Logika Interaksi Buffer
+        self.lru_order.append(key) # Key baru diakses ditambah di akhir    # Logika Interaksi Buffer
     def read_block(self, table_name: str, pk_value: Dict[str, Any]) -> BufferedRow:
         key = self._get_buffer_key(table_name, pk_value)
         pk_str = str(pk_value)
@@ -56,8 +54,10 @@ class BufferManager:
         found_row = None
         for row_data in table_obj.data:
             is_match = True
+            # Create lowercase version of row_data keys for comparison
+            row_data_lower = {k.lower(): v for k, v in row_data.items()}
             for k, v in pk_value.items():
-                if row_data.get(k) != v:
+                if row_data_lower.get(k.lower()) != v:
                     is_match = False
                     break
             if is_match:
@@ -145,8 +145,7 @@ class BufferManager:
     def is_buffer_almost_full(self) -> bool:
         # Mendeteksi kapan buffer hampir penuh (misalnya 75%)
         return len(self.buffer_data) >= (self.capacity*0.75)
-    
-    # Logika Flush Buffer
+      # Logika Flush Buffer
     def flush_dirty_blocks(self):
         dirty_rows = [row for row in self.buffer_data.values() if row.is_dirty]
         if not dirty_rows:
@@ -171,10 +170,13 @@ class BufferManager:
             for disk_row in current_disk_data:
                 updated_row = disk_row
                 should_keep = True
+                # Create lowercase version of disk_row keys for comparison
+                disk_row_lower = {k.lower(): v for k, v in disk_row.items()}
                 for buf_row in buffer_updates:
                     is_match = True
                     for k, v in buf_row.primary_key_value.items():
-                        if disk_row.get(k) != v:
+                        # Compare with lowercase keys
+                        if disk_row_lower.get(k.lower()) != v:
                             is_match = False
                             break
 

@@ -654,11 +654,17 @@ class StorageEngine:
                 pk_tuple = tuple(row.get(pk_col) for pk_col in pk_columns)
                 buffer_rows_map[pk_tuple] = row
 
+            # Get deleted keys from buffer (if available)
+            deleted_keys = set(table.deleted_keys)
+
             # merge buffer dengan disk atau tulis ulang
             merged_rows = []
             for existing_row in existing_rows:
                 pk_tuple = tuple(existing_row.get(pk_col)
                                  for pk_col in pk_columns)
+                # Skip rows that were deleted in buffer
+                if pk_tuple in deleted_keys:
+                    continue
                 if pk_tuple in buffer_rows_map:
                     merged_rows.append(buffer_rows_map[pk_tuple])
                     del buffer_rows_map[pk_tuple]
