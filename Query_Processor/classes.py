@@ -106,13 +106,13 @@ class QueryProcessor:
 
         query_upper = query.upper().strip()
 
-        if query_upper.upper == "BEGIN" or query_upper == "BEGIN TRANSACTION":
+        if query_upper == "BEGIN;" or query_upper == "BEGIN TRANSACTION;":
             return [self._handle_begin_transaction(query, client_address)]
 
-        if query_upper == "COMMIT":
+        if query_upper == "COMMIT;":
             return self._handle_commit(query, client_address)
 
-        if query_upper == "ROLLBACK" or query_upper == "ABORT":
+        if query_upper == "ROLLBACK;" or query_upper == "ABORT;":
             return [self._handle_rollback(query, client_address)]
 
         if query_upper.startswith("SET CONCURRENCY") and query_upper.endswith(";"):
