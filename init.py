@@ -5,7 +5,7 @@ from Storage_Manager.serializer import Serializer
 
 DATA_DIR = ""
 
-print("\nSetup: Generating test data")
+print("\nSetup: Generating data")
 
 random.seed(2025)
 serializer = Serializer()
@@ -76,4 +76,5 @@ for schema, data in [
     storage.write_schema_file(schema)
     storage.write_data_file(schema["table_name"], data, schema)
 
-print("Setup: Complete (10000 students, 50 courses, 50 attends)\n")
+print(f"Setup: Data generation complete and stored in 'data/{DATA_DIR}' directory.")
+print(f"Created: 3 tables (student: {len(students)} rows, course: {len(courses)} rows, attends: {len(attends)} rows)")
