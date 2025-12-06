@@ -143,8 +143,8 @@ class SQLTokenizer:
         if char in ('"', "'"):
             return self._read_string(char)
 
-        # Numbers
-        if char.isdigit():
+        # Numbers (including negative numbers)
+        if char.isdigit() or (char == '-' and self._peek(1) and self._peek(1).isdigit()):
             return self._read_number()
 
         # Identifiers and keywords
@@ -229,10 +229,15 @@ class SQLTokenizer:
         return SQLToken('STRING', value, start_pos)
 
     def _read_number(self) -> SQLToken:
-        """Read a numeric literal"""
+        """Read a numeric literal (including negative numbers)"""
         start_pos = self.position
         value = ''
         has_dot = False
+
+        # Handle negative sign
+        if self._peek() == '-':
+            value += '-'
+            self._advance()
 
         while self.position < len(self.query):
             char = self._peek()
