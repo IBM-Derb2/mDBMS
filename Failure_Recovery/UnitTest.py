@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from Failure_Recovery.buffer_manager import BufferManager
 from Failure_Recovery.failure_recovery_manager import FailureRecoveryManager
-from Failure_Recovery.types import WalAction
+from Failure_Recovery.frm_types import WalAction
 from Storage_Manager.storage_engine import StorageEngine
 from Storage_Manager.serializer import Serializer
 
@@ -191,11 +191,16 @@ class TestFailureRecoveryManager(unittest.TestCase):
         initial_buffer_size = len(self.buffer_manager.buffer_data)
         self.assertGreater(initial_buffer_size, 0)
         
+        # Count dirty blocks before flush
+        dirty_count = sum(1 for row in self.buffer_manager.buffer_data.values() if row.is_dirty)
+        self.assertEqual(dirty_count, 3)
+        
         self.buffer_manager.flush_dirty_blocks()
         
-        # buffer should be cleared
-        self.assertEqual(len(self.buffer_manager.buffer_data), 0)
-
+        # After flush: blocks remain cached but no longer dirty
+        self.assertEqual(len(self.buffer_manager.buffer_data), 3)
+        dirty_after = sum(1 for row in self.buffer_manager.buffer_data.values() if row.is_dirty)
+        self.assertEqual(dirty_after, 0)  # All dirty flags should be reset
     
     def test_08_checkpoint_with_active_transactions(self):
         """Test checkpoint with active transactions"""

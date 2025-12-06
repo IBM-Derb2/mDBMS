@@ -1,5 +1,5 @@
 from typing import Dict, Any, Union, List
-from .types import BufferedRow, BUFFER_CAPACITY
+from .frm_types import BufferedRow, BUFFER_CAPACITY
 
 
 class TableWrapper:

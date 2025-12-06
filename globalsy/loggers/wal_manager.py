@@ -369,7 +369,7 @@ class WALManager:
         """Parse a log line into LogEntry"""
 
         try:
-            from Failure_Recovery.types import LogEntry
+            from Failure_Recovery.frm_types import LogEntry
 
             d: Dict[str, Any] = json.loads(line)
             ts = datetime.fromisoformat(
@@ -411,7 +411,7 @@ class WALManager:
             LogEntry objects
         """
 
-        from Failure_Recovery.types import RecoverCriteria
+        from Failure_Recovery.frm_types import RecoverCriteria
 
         if criteria is None:
             criteria = RecoverCriteria()
