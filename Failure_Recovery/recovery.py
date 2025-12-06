@@ -1,7 +1,7 @@
 from datetime import datetime
 import json
 from typing import Optional, Set, Dict, Any, List
-from .types import WalAction, WalType, RecoverCriteria, LogEntry
+from .frm_types import WalAction, WalType, RecoverCriteria, LogEntry
 from .buffer_manager import BufferManager
 from globalsy.loggers.wal_manager import WALManager
 

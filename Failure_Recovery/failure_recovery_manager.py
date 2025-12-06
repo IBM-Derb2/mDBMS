@@ -2,7 +2,7 @@ import threading
 import time
 
 from typing import Any, Callable, Set
-from .types import WalAction
+from .frm_types import WalAction
 from globalsy.loggers.wal_manager import WALManager
 from globalsy.loggers.log_history import LogHistoryManager
 from .recovery import RecoveryEngine
