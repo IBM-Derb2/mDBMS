@@ -132,8 +132,7 @@ class FailureRecoveryManager:
         print("[FRM] Starting WAL cleanup...")
 
         if not ongoing_transactions:
-            print("[FRM] No ongoing transactions, clearing entire WAL")
-            self.wal_manager.clear_entire_wal()
+            self.wal_manager.clear_wal_before_checkpoint()
         else:
             print(f"[FRM] Clearing WAL before oldest ongoing transaction")
             self.wal_manager.clear_wal_before_oldest_transaction(ongoing_transactions)

@@ -28,21 +28,26 @@ class RecoveryEngine:
         print("\n[Recovery] ===== REDO PHASE =====")
         entries_after.reverse()
         redo_count = 0
+        aborted_transactions = set()  # Track aborted transactions
 
         for entry in entries_after:
             tx_id = entry.transaction_id
             action = entry.action
 
             if action in ["insert", "update", "delete"]:
-                print(f"[Recovery] REDO: TX {tx_id} {action.upper()} on {entry.table_name}")
-                self._apply_redo(entry)
-                redo_count += 1
+                if tx_id not in aborted_transactions:
+                    print(f"[Recovery] REDO: TX {tx_id} {action.upper()} on {entry.table_name}")
+                    self._apply_redo(entry)
+                    redo_count += 1
+                else:
+                    print(f"[Recovery] SKIP REDO: TX {tx_id} {action.upper()} (already aborted)")
             elif action == "start":
                 undo_list.add(tx_id)
             elif action == "commit":
                 undo_list.discard(tx_id)
             elif action == "abort":
                 undo_list.discard(tx_id)
+                aborted_transactions.add(tx_id) 
 
         print(f"[Recovery] REDO complete: {redo_count} operations re-applied")
         print(f"[Recovery] Transactions needing UNDO: {undo_list}")
