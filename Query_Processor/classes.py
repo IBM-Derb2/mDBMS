@@ -116,6 +116,10 @@ class QueryProcessor:
         if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
             return [self._handle_rollback(query, client_address)]
 
+        # Handle SET CONCURRENCY command
+        if query_upper.startswith("SET CONCURRENCY"):
+            return [self._handle_set_concurrency(query, client_address)]
+
         if explicit_transaction:
             # Check if transaction is in failed state
             if transaction_failed:
@@ -413,6 +417,70 @@ class QueryProcessor:
         self._reset_transaction_state(session)
 
         message = f"Transaction rolled back. {query_count} pending {'query' if query_count == 1 else 'queries'} discarded." if query_count > 0 else "Transaction rolled back."
+
+        return ExecutionResult(
+            transaction_id=tid or 0,
+            query=query,
+            timestamp=datetime.now(),
+            message=message
+        )
+
+    def _handle_set_concurrency(self, query: str, client_address: tuple = None) -> ExecutionResult:
+        """
+        Handle SET CONCURRENCY command to switch concurrency control mechanism
+        Syntax: SET CONCURRENCY TO <mechanism>;
+        Supported mechanisms: LOCK-BASED, TIMESTAMP-BASED, VALIDATION-BASED, MULTI-VERSION
+        """
+        try:
+            # Parse the command
+            # Expected format: "SET CONCURRENCY TO <mechanism>;"
+            query_clean = query.strip().rstrip(';').upper()
+            parts = query_clean.split()
+            
+            if len(parts) < 4 or parts[2] != "TO":
+                return ExecutionResult(
+                    transaction_id=0,
+                    query=query,
+                    timestamp=datetime.now(),
+                    message="Error: Invalid syntax. Use: SET CONCURRENCY TO <mechanism>;"
+                )
+            
+            # Get mechanism name 
+            mechanism_parts = parts[3:]
+            mechanism = "-".join(mechanism_parts).lower()
+            
+            # Validate mechanism
+            valid_mechanisms = ["lock-based", "timestamp-based", "validation-based", "multi-version"]
+            if mechanism not in valid_mechanisms:
+                return ExecutionResult(
+                    transaction_id=0,
+                    query=query,
+                    timestamp=datetime.now(),
+                    message=f"Error: Unknown concurrency mechanism '{mechanism}'. "
+                           f"Valid options: {', '.join(valid_mechanisms)}"
+                )
+            
+            # Switch the mechanism
+            self.cc_manager.set_concurrency_mechanism(mechanism)
+            
+            # Get stats to confirm
+            stats = self.cc_manager.get_statistics()
+            strategy_name = stats.get("strategy", "Unknown")
+            
+            return ExecutionResult(
+                transaction_id=0,
+                query=query,
+                timestamp=datetime.now(),
+                message=f"Concurrency control mechanism changed to: {mechanism.upper()} ({strategy_name})"
+            )
+            
+        except Exception as e:
+            return ExecutionResult(
+                transaction_id=0,
+                query=query,
+                timestamp=datetime.now(),
+                message=f"Error changing concurrency mechanism: {str(e)}"
+            )
 
         return ExecutionResult(
             transaction_id=tid if tid else 0,

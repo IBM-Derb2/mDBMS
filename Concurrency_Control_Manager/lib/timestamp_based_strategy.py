@@ -27,7 +27,8 @@ class TimestampBasedStrategy(ConcurrencyStrategy):
     def log_object(self, obj: Any, transaction_id: int, action: str):
         obj_id = self._get_object_id(obj)
         action = action.strip().upper()
-        tx_ts = transaction_id
+        # Convert transaction_id to comparable timestamp (use hash for consistency)
+        tx_ts = hash(str(transaction_id)) if isinstance(transaction_id, str) else transaction_id
 
         if obj_id not in self.timestamp_table:
             self.timestamp_table[obj_id] = TimestampEntry()
@@ -44,7 +45,8 @@ class TimestampBasedStrategy(ConcurrencyStrategy):
     def validate_object(self, obj: Any, transaction_id: int, action: str) -> Response:
         obj_id = self._get_object_id(obj)
         action = action.strip().upper()
-        tx_ts = transaction_id
+        # Convert transaction_id to comparable timestamp (use hash for consistency)
+        tx_ts = hash(str(transaction_id)) if isinstance(transaction_id, str) else transaction_id
 
         if obj_id not in self.timestamp_table:
             return Response(allowed=True, transaction_id=transaction_id)
