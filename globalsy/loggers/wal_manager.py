@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List, Union, Iterator
 from Failure_Recovery.frm_types import LogEntry
 from Failure_Recovery.frm_types import RecoverCriteria
 
+
 class WALManager:
     """
     Manages Write-Ahead Log (WAL) for recovery and rollback.
@@ -177,8 +178,8 @@ class WALManager:
             ongoing_transactions: List of active transaction IDs
         """
 
-        tx_ids = [int(tx) if isinstance(tx, str)
-                  else tx for tx in ongoing_transactions]
+        # Transaction IDs are strings in format: '127.0.0.1:port-timestamp-counter'
+        tx_ids = [str(tx) for tx in ongoing_transactions]
 
         entry = {
             "timestamp": datetime.now().isoformat(),
@@ -203,8 +204,8 @@ class WALManager:
             self.clear_entire_wal()
             return
 
-        ongoing_tx_set = set(int(tx) if isinstance(
-            tx, str) else tx for tx in ongoing_transactions)
+        ongoing_tx_set = set(str(tx) if isinstance(
+            tx, str) else str(tx) for tx in ongoing_transactions)
         oldest_tx_id = min(ongoing_tx_set)
         print(f"[WAL Clear] Oldest ongoing transaction: {oldest_tx_id}")
         print(f"[WAL Clear] Ongoing transactions: {sorted(ongoing_tx_set)}")
@@ -301,9 +302,6 @@ class WALManager:
             try:
                 entry = json.loads(line)
                 tx_id = entry.get("transaction_id")
-
-                if isinstance(tx_id, str):
-                    tx_id = int(tx_id)
 
                 if tx_id == keep_tx:
                     found_transaction = True

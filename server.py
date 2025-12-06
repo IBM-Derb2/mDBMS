@@ -32,10 +32,11 @@ class Server:
         print("--- mini Database Management System (mDBMS) Server ---")
         print("Initializing DBMS components...")
 
-        self.optimizer = OptimizationEngine()
         self.serializer = Serializer()
-
         self.storage = StorageEngine(serializer=self.serializer)
+
+        # Pass storage engine to optimizer so it uses actual table statistics
+        self.optimizer = OptimizationEngine(storage_engine=self.storage)
 
         buffer_manager = BufferManager(capacity=100)
 
