@@ -371,6 +371,12 @@ class StorageEngine:
 
             transaction_id = getattr(data_write, 'transaction_id', 0)
 
+            # Normalize new_value to always be a list
+            if not isinstance(data_write.new_value, list):
+                new_values = [data_write.new_value]
+            else:
+                new_values = data_write.new_value
+
             for i, row in enumerate(merged_rows):
                 if self._matches_conditions(row, data_write.conditions):
                     updated_row = row.copy()
@@ -395,8 +401,8 @@ class StorageEngine:
                         expected_type = self.TYPE_MAPPING.get(col_type)
                         
                         # Get the corresponding value
-                        if col_idx < len(data_write.new_value):
-                            new_val = data_write.new_value[col_idx]
+                        if col_idx < len(new_values):
+                            new_val = new_values[col_idx]
                         else:
                             continue
                         
