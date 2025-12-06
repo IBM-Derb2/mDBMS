@@ -67,8 +67,14 @@ class StatisticsManager:
         if not self.storage_engine:
             return
 
-        table_names = ['users', 'orders', 'products',
-                       'categories', 'student', 'attends', 'course']
+        # Dynamically discover all tables from storage
+        table_names = self._get_all_tables_from_storage()
+
+        if not table_names:
+            logger.debug(
+                "No tables found in storage, using default mock statistics")
+            self._initialize_default_stats()
+            return
 
         for table_name in table_names:
             try:
@@ -99,7 +105,7 @@ class StatisticsManager:
 
         if not self.tables:
             logger.debug(
-                "No tables found in storage, using default mock statistics")
+                "No valid statistics loaded, using default mock statistics")
             self._initialize_default_stats()
 
     def _initialize_default_stats(self):
@@ -279,6 +285,84 @@ class StatisticsManager:
         Formula: 1 - selectivity
         """
         return 1.0 - selectivity
+
+    def _get_all_tables_from_storage(self) -> list:
+        """Dynamically discover all tables from storage by scanning for *_schema.dat files"""
+        if not self.storage_engine:
+            return []
+
+        import os
+        import glob
+
+        data_folder = self.storage_engine.DATA_FOLDER
+        data_dir = self.storage_engine.data_dir
+
+        # Scan for all *_schema.dat files
+        pattern = f"{data_folder}/{data_dir}/*_schema.dat" if data_dir else f"{data_folder}/*_schema.dat"
+        schema_files = glob.glob(pattern)
+
+        table_names = []
+        for schema_file in schema_files:
+            # Extract table name from filename: 'data/student_schema.dat' -> 'student'
+            basename = os.path.basename(schema_file)
+            table_name = basename.replace('_schema.dat', '')
+            table_names.append(table_name)
+
+        logger.debug(
+            f"Discovered {len(table_names)} tables from storage: {table_names}")
+        return table_names
+
+    def refresh_table_stats(self, table_name: str) -> None:
+        """Refresh statistics for a specific table after DDL/DML operations"""
+        if not self.storage_engine:
+            logger.warning(
+                f"Cannot refresh stats for '{table_name}': no storage engine")
+            return
+
+        try:
+            storage_stats = self.storage_engine.get_stats(table_name)
+            if not storage_stats:
+                logger.warning(f"No stats available for table '{table_name}'")
+                return
+
+            table_stats = TableStatistics(
+                name=table_name,
+                row_count=storage_stats.n_r,
+                avg_row_size=storage_stats.l_r
+            )
+
+            for col_name, distinct_count in storage_stats.V_a_r.items():
+                table_stats.add_column_stats(
+                    column=col_name,
+                    distinct_values=distinct_count,
+                    null_count=0
+                )
+
+            self.tables[table_name] = table_stats
+            logger.debug(
+                f"Refreshed stats for '{table_name}': {storage_stats.n_r:,} rows")
+        except Exception as e:
+            logger.error(f"Failed to refresh stats for '{table_name}': {e}")
+
+    def refresh_all_stats(self) -> None:
+        """Refresh statistics for all tables - useful after bulk operations"""
+        if not self.storage_engine:
+            logger.warning("Cannot refresh stats: no storage engine")
+            return
+
+        # Clear existing stats
+        self.tables.clear()
+
+        # Reload from storage
+        self._load_stats_from_storage()
+
+        logger.info(f"Refreshed statistics for {len(self.tables)} tables")
+
+    def remove_table_stats(self, table_name: str) -> None:
+        """Remove statistics for a dropped table"""
+        if table_name in self.tables:
+            del self.tables[table_name]
+            logger.debug(f"Removed stats for dropped table '{table_name}'")
 
     def calculate_cost(self, node, estimated_rows: int = None) -> tuple[int, int]:
         from globalsy.classes.query_tree import QueryTree
