@@ -47,6 +47,11 @@ class Server:
             log_directory="logs",
             checkpoint_interval=10
         )
+        print("[Server] Running recovery...")
+        recovery_stats = self.frm.recover()
+        if recovery_stats['recovered']:
+            print(f"[Server] Recovery complete: {recovery_stats['redo_count']} REDO, {recovery_stats['undo_count']} UNDO")
+
 
         self.storage.frm = self.frm
         self.cc_manager = ConcurrencyControlManager(frm=self.frm)

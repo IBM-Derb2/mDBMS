@@ -366,7 +366,9 @@ class WALManager:
 
     def _parse_line(self, line: str):
         """Parse a log line into LogEntry"""
-
+        line = line.strip()
+        if not line:
+            return None
         try:
 
             d: Dict[str, Any] = json.loads(line)
