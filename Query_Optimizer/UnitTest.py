@@ -148,30 +148,123 @@ def write_parser_report(f, show_trees=False):
 def write_optimizer_report(f):
     """Write optimizer-specific test results."""
     from Query_Optimizer.optimization_engine import OptimizationEngine
+    import logging
+
+    # Disable logging during report generation
+    logging.getLogger().setLevel(logging.ERROR)
 
     f.write("## Optimizer Tests\n\n")
-    f.write("### Query Cost Analysis\n\n")
 
-    samples = [
-        "SELECT * FROM users",
-        "SELECT * FROM users WHERE id = 1",
-        "SELECT * FROM users u JOIN orders o ON u.id = o.user_id",
-        "SELECT * FROM users, orders WHERE users.id = orders.user_id"
+    # Helper function to format tree with node details
+    def tree_to_string(tree, indent=0, is_last_child=True):
+        lines = []
+        if indent == 0:
+            prefix = ""
+            branch = ""
+        else:
+            prefix = "  " * (indent - 1)
+            branch = "└─ " if is_last_child else "├─ "
+
+        line = f"{prefix}{branch}{tree.type}"
+
+        if hasattr(tree, 'val') and tree.val:
+            val_str = str(tree.val)
+            if isinstance(tree.val, list):
+                val_str = f"[{', '.join(repr(v) for v in tree.val)}]"
+            else:
+                val_str = f"'{val_str}'"
+            line += f" = {val_str}"
+        elif hasattr(tree, 'value') and tree.value:
+            line += f" = '{tree.value}'"
+
+        if hasattr(tree, 'table') and tree.table:
+            line += f" (table: {tree.table})"
+
+        if hasattr(tree, 'alias') and tree.alias:
+            line += f" (alias: {tree.alias})"
+
+        lines.append(line + "\n")
+
+        if hasattr(tree, 'childs') and tree.childs:
+            for i, child in enumerate(tree.childs):
+                is_last = (i == len(tree.childs) - 1)
+                lines.append(tree_to_string(child, indent + 1, is_last))
+
+        return "".join(lines)
+
+    # Test queries with descriptions
+    test_cases = [
+        ("Simple Query", "SELECT * FROM users WHERE id = 1"),
+        ("Cartesian Product to Theta Join",
+         "SELECT * FROM users u, orders o WHERE u.id = o.user_id"),
+        ("Selection Pushdown", "SELECT * FROM users WHERE age > 18"),
+        ("Multiple Conditions", """SELECT * FROM users u, orders o 
+        WHERE u.id = o.user_id 
+        AND u.status = 'ACTIVE' 
+        AND o.total > 100"""),
+        ("Complex Join", """SELECT u.name, o.total 
+        FROM users u 
+        JOIN orders o ON u.id = o.user_id 
+        WHERE o.status = 'PAID' 
+        AND u.age >= 18"""),
     ]
 
     engine = OptimizationEngine()
 
-    f.write("| Query | Cost |\n")
-    f.write("|-------|------|\n")
+    for title, query in test_cases:
+        f.write(f"### {title}\n\n")
+        f.write(f"**Query:**\n```sql\n{query.strip()}\n```\n\n")
 
-    for query in samples:
         try:
-            cost = engine.get_cost(query)
-            f.write(f"| `{query[:50]}...` | {cost:.2f} |\n")
-        except Exception as e:
-            f.write(f"| `{query[:50]}...` | Error: {str(e)[:30]} |\n")
+            # Parse and get before state
+            parsed = engine.parse_query(query)
+            cost_before, rows_before = engine.statistics_manager.calculate_cost(
+                parsed.query_tree)
+            tree_before = tree_to_string(parsed.query_tree, 0)
 
-    f.write("\n")
+            # Optimize
+            optimized = engine.optimize_query(parsed)
+            cost_after, rows_after = engine.statistics_manager.calculate_cost(
+                optimized.query_tree)
+            tree_after = tree_to_string(optimized.query_tree, 0)
+
+            # Check if changed
+            tree_changed = tree_before != tree_after
+            improvement = ((cost_before - cost_after) /
+                           cost_before) * 100 if cost_before > 0 else 0
+
+            if tree_changed:
+                f.write("> ✅ **Tree was modified by optimizer**\n\n")
+            else:
+                f.write(
+                    "> ⚠️ **Tree was NOT modified - no optimizations applied**\n\n")
+
+            f.write("#### Before Optimization\n\n")
+            f.write(f"- **Estimated Cost:** {cost_before:,}\n")
+            f.write(f"- **Estimated Rows:** {rows_before:,}\n\n")
+            f.write("**Tree Structure:**\n```\n")
+            f.write(tree_before)
+            f.write("```\n\n")
+
+            f.write("#### After Optimization\n\n")
+            f.write(f"- **Estimated Cost:** {cost_after:,}\n")
+            f.write(f"- **Estimated Rows:** {rows_after:,}\n\n")
+            f.write("**Tree Structure:**\n```\n")
+            f.write(tree_after)
+            f.write("```\n\n")
+
+            f.write("#### Optimization Results\n\n")
+            f.write("| Metric | Before | After | Difference | Improvement |\n")
+            f.write("|--------|--------|-------|------------|-----------|\n")
+            f.write(
+                f"| **Cost** | {cost_before:,} | {cost_after:,} | {cost_before - cost_after:,} | {improvement:.2f}% |\n")
+            f.write(
+                f"| **Rows** | {rows_before:,} | {rows_after:,} | {rows_before - rows_after:,} | - |\n\n")
+            f.write("---\n\n")
+
+        except Exception as e:
+            f.write(f"**Error:** {str(e)}\n\n")
+            f.write("---\n\n")
 
 
 def write_rules_report(f):
