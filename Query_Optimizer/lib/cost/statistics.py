@@ -56,6 +56,9 @@ class StatisticsManager:
     def __init__(self, storage_engine=None):
         self.tables: Dict[str, TableStatistics] = {}
         self.storage_engine = storage_engine
+        self.instance_id = id(self)
+        print(
+            f"[QO Stats] Created StatisticsManager instance {self.instance_id}")
 
         if self.storage_engine:
             self._load_stats_from_storage()
@@ -171,7 +174,17 @@ class StatisticsManager:
 
     def get_row_count(self, table_name: str) -> int:
         """Get row count for a table"""
+        print(
+            f"[QO Stats] get_row_count('{table_name}') - Instance {self.instance_id}")
+        print(
+            f"[QO Stats] Available tables in cache: {list(self.tables.keys())}")
         stats = self.get_table_stats(table_name)
+        if stats:
+            print(
+                f"[QO Stats] Found stats for '{table_name}': {stats.row_count} rows")
+        else:
+            print(
+                f"[QO Stats] No stats found for '{table_name}', returning default 1000")
         return stats.row_count if stats else 1000  # Default if not found
 
     def estimate_selectivity(self, table_name: str, column: str, operator: str, value=None) -> float:
@@ -319,14 +332,20 @@ class StatisticsManager:
                 f"Cannot refresh stats for '{table_name}': no storage engine")
             return
 
+        # Normalize table name to lowercase for consistency
+        table_name_lower = table_name.lower()
+        print(
+            f"[QO Stats] refresh_table_stats('{table_name_lower}') - Instance {self.instance_id}")
+
         try:
-            storage_stats = self.storage_engine.get_stats(table_name)
+            storage_stats = self.storage_engine.get_stats(table_name_lower)
             if not storage_stats:
-                logger.warning(f"No stats available for table '{table_name}'")
+                logger.warning(
+                    f"No stats available for table '{table_name_lower}'")
                 return
 
             table_stats = TableStatistics(
-                name=table_name,
+                name=table_name_lower,
                 row_count=storage_stats.n_r,
                 avg_row_size=storage_stats.l_r
             )
@@ -338,11 +357,17 @@ class StatisticsManager:
                     null_count=0
                 )
 
-            self.tables[table_name] = table_stats
+            self.tables[table_name_lower] = table_stats
+            print(
+                f"[QO Stats] Refreshed stats for '{table_name_lower}': {storage_stats.n_r:,} rows (Instance {self.instance_id})")
+            print(f"[QO Stats] Cache now contains: {list(self.tables.keys())}")
             logger.debug(
-                f"Refreshed stats for '{table_name}': {storage_stats.n_r:,} rows")
+                f"Refreshed stats for '{table_name_lower}': {storage_stats.n_r:,} rows")
         except Exception as e:
-            logger.error(f"Failed to refresh stats for '{table_name}': {e}")
+            print(
+                f"[QO Stats] Failed to refresh stats for '{table_name_lower}': {e}")
+            logger.error(
+                f"Failed to refresh stats for '{table_name_lower}': {e}")
 
     def refresh_all_stats(self) -> None:
         """Refresh statistics for all tables - useful after bulk operations"""
