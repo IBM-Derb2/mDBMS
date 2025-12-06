@@ -15,7 +15,7 @@ storage = StorageEngine(data_dir=DATA_DIR, serializer=serializer)
 schema_student = {
     "table_name": "student",
     "columns": [
-        {"name": "studentid", "type": "int"},
+        {"name": "studentid", "type": "int", "primary_key": True},
         {"name": "fullname", "type": "varchar", "length": 50},
         {"name": "gpa", "type": "float"}
     ]
@@ -24,7 +24,7 @@ schema_student = {
 schema_course = {
     "table_name": "course",
     "columns": [
-        {"name": "CourseID", "type": "int"},
+        {"name": "CourseID", "type": "int", "primary_key": True},
         {"name": "Year", "type": "int"},
         {"name": "CourseName", "type": "varchar", "length": 50},
         {"name": "CourseDescription", "type": "varchar", "length": 255}
@@ -34,8 +34,16 @@ schema_course = {
 schema_attends = {
     "table_name": "attends",
     "columns": [
-        {"name": "studentid", "type": "int"},
-        {"name": "CourseID", "type": "int"},
+        {"name": "studentid", "type": "int", "foreign_key": {
+            "table": "student",
+            "column": "studentid",
+            "on_delete": "cascade"  # When student is deleted, their attendance records are also deleted
+        }},
+        {"name": "CourseID", "type": "int", "foreign_key": {
+            "table": "course",
+            "column": "CourseID",
+            "on_delete": "restrict"  # Cannot delete a course if students are attending it
+        }},
         {"name": "Year", "type": "int"},
     ]
 }
@@ -78,3 +86,8 @@ for schema, data in [
 
 print(f"Setup: Data generation complete and stored in 'data/{DATA_DIR}' directory.")
 print(f"Created: 3 tables (student: {len(students)} rows, course: {len(courses)} rows, attends: {len(attends)} rows)")
+print(f"\nConstraints:")
+print(f"  - student.studentid: PRIMARY KEY")
+print(f"  - course.CourseID: PRIMARY KEY")
+print(f"  - attends.studentid -> student.studentid: FOREIGN KEY (ON DELETE CASCADE)")
+print(f"  - attends.CourseID -> course.CourseID: FOREIGN KEY (ON DELETE RESTRICT)")

@@ -724,15 +724,20 @@ class StorageEngine:
             return float(value)
         raise ValueError(
             f"Type mismatch: expected {col_type_name}, got {type(value).__name__}"
-        )
-
+        )    
     def _matches_conditions(self, row: dict, conditions: List) -> bool:
 
         if not conditions:
             return True
 
         for condition in conditions:
-            column_value = row.get(condition.column)
+            # Case-insensitive column lookup
+            column_value = None
+            col_lower = condition.column.lower()
+            for k, v in row.items():
+                if k.lower() == col_lower:
+                    column_value = v
+                    break
 
             if column_value is None:
                 return False
