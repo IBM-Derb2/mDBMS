@@ -12,7 +12,6 @@ from globalsy.constants.query_operators import QueryOperators
 logger = logging.getLogger(__name__)
 
 
-
 class TableStatistics:
     """Statistics for a single table"""
 
@@ -68,31 +67,39 @@ class StatisticsManager:
         if not self.storage_engine:
             return
 
-        table_names = ['users', 'orders', 'products', 'categories', 'student', 'attends', 'course']
+        table_names = ['users', 'orders', 'products',
+                       'categories', 'student', 'attends', 'course']
 
         for table_name in table_names:
-            storage_stats = self.storage_engine.get_stats(table_name)
-            if not storage_stats:
-                continue
+            try:
+                storage_stats = self.storage_engine.get_stats(table_name)
+                if not storage_stats:
+                    continue
 
-            table_stats = TableStatistics(
-                name=table_name,
-                row_count=storage_stats.n_r,
-                avg_row_size=storage_stats.l_r
-            )
-
-            for col_name, distinct_count in storage_stats.V_a_r.items():
-                table_stats.add_column_stats(
-                    column=col_name,
-                    distinct_values=distinct_count,
-                    null_count=0
+                table_stats = TableStatistics(
+                    name=table_name,
+                    row_count=storage_stats.n_r,
+                    avg_row_size=storage_stats.l_r
                 )
 
-            self.tables[table_name] = table_stats
-            logger.debug(f"Loaded stats for '{table_name}': {storage_stats.n_r:,} rows")
+                for col_name, distinct_count in storage_stats.V_a_r.items():
+                    table_stats.add_column_stats(
+                        column=col_name,
+                        distinct_values=distinct_count,
+                        null_count=0
+                    )
+
+                self.tables[table_name] = table_stats
+                logger.debug(
+                    f"Loaded stats for '{table_name}': {storage_stats.n_r:,} rows")
+            except (FileNotFoundError, Exception) as e:
+                # Table doesn't exist yet or error loading stats, skip it
+                logger.debug(f"Could not load stats for '{table_name}': {e}")
+                continue
 
         if not self.tables:
-            logger.debug("No tables found in storage, using default mock statistics")
+            logger.debug(
+                "No tables found in storage, using default mock statistics")
             self._initialize_default_stats()
 
     def _initialize_default_stats(self):
@@ -295,12 +302,14 @@ class StatisticsManager:
             return 0, 0
         elif node.type == QueryTypes.ORDER_BY:
             if node.childs:
-                cost, rows = self.calculate_cost(node.childs[0], estimated_rows)
+                cost, rows = self.calculate_cost(
+                    node.childs[0], estimated_rows)
                 return cost + (rows * 10), rows
             return 0, 0
         elif node.type == QueryTypes.LIMIT:
             if node.childs:
-                cost, rows = self.calculate_cost(node.childs[0], estimated_rows)
+                cost, rows = self.calculate_cost(
+                    node.childs[0], estimated_rows)
                 limit = int(node.val) if node.val else rows
                 return cost, min(rows, limit)
             return 0, 0
@@ -308,7 +317,8 @@ class StatisticsManager:
             total_cost = 0
             total_rows = estimated_rows if estimated_rows else 1000
             for child in node.childs:
-                child_cost, child_rows = self.calculate_cost(child, estimated_rows)
+                child_cost, child_rows = self.calculate_cost(
+                    child, estimated_rows)
                 total_cost += child_cost
                 if child_rows:
                     total_rows = child_rows
@@ -379,10 +389,12 @@ class StatisticsManager:
         from globalsy.constants.query_operators import QueryOperators
 
         if condition.val == QueryOperators.AND:
-            selectivities = [self._estimate_selectivity_from_condition(child) for child in condition.childs]
+            selectivities = [self._estimate_selectivity_from_condition(
+                child) for child in condition.childs]
             return self.estimate_conjunction_selectivity(selectivities)
         elif condition.val == QueryOperators.OR:
-            selectivities = [self._estimate_selectivity_from_condition(child) for child in condition.childs]
+            selectivities = [self._estimate_selectivity_from_condition(
+                child) for child in condition.childs]
             return self.estimate_disjunction_selectivity(selectivities)
         elif condition.val in [QueryOperators.EQ, QueryOperators.NEQ, QueryOperators.LT, QueryOperators.LTE, QueryOperators.GT, QueryOperators.GTE]:
             if condition.val == QueryOperators.EQ:
@@ -398,7 +410,8 @@ class StatisticsManager:
         logger.info("DATABASE STATISTICS")
         logger.info("="*80)
         logger.info(f"\nTotal Tables: {len(self.tables)}")
-        logger.info(f"Total Rows: {sum(t.row_count for t in self.tables.values()):,}")
+        logger.info(
+            f"Total Rows: {sum(t.row_count for t in self.tables.values()):,}")
         logger.info("")
 
         for table_name in sorted(self.tables.keys()):

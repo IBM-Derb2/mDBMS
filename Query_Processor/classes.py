@@ -910,8 +910,10 @@ class QueryProcessor:
 
                 # Lock each affected row
                 for row in affected_rows.data:
-                    pk_values = ":".join(str(row.get(pk_col))
-                                         for pk_col in pk_columns)
+                    pk_values = ":".join(
+                        str(self.storage_manager._get_case_insensitive(row, pk_col, value_only=True))
+                        for pk_col in pk_columns
+                    )
                     row_id = f"{table}:row:{pk_values}"
                     self._validate_ccm(row_id, "write")
         else:
@@ -965,8 +967,10 @@ class QueryProcessor:
 
                 # Lock each affected row
                 for row in affected_rows.data:
-                    pk_values = ":".join(str(row.get(pk_col))
-                                         for pk_col in pk_columns)
+                    pk_values = ":".join(
+                        str(self.storage_manager._get_case_insensitive(row, pk_col, value_only=True))
+                        for pk_col in pk_columns
+                    )
                     row_id = f"{table}:row:{pk_values}"
                     self._validate_ccm(row_id, "write")
         else:

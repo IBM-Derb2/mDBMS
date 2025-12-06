@@ -37,31 +37,38 @@ class SelectionRule(OptimizationRule):
         self._log('info', f"Applying selection optimization with heuristic rules")
 
         if self._has_selection_over_join_or_product(tree):
-            self._log('info', "Heuristic: Converting Cartesian product + WHERE to theta join")
+            self._log(
+                'info', "Heuristic: Converting Cartesian product + WHERE to theta join")
             tree = self._combine_selection_with_join(tree)
 
         if self._has_conjunctive_condition(tree):
-            self._log('info', "Heuristic: Decomposing AND conditions for early selection")
+            self._log(
+                'info', "Heuristic: Decomposing AND conditions for early selection")
             tree = self._decompose_conjunctive_selection(tree)
 
         if self._has_cascaded_selections(tree):
-            self._log('info', "Heuristic: Reordering selections by selectivity (most restrictive first)")
+            self._log(
+                'info', "Heuristic: Reordering selections by selectivity (most restrictive first)")
             tree = self._optimize_selection_order(tree)
 
         return tree
 
     def _has_conjunctive_condition(self, tree: QueryTree) -> bool:
 
-        # cari WHERE nodes
+        # cari WHERE nodes atau SELECTION_STMT nodes
         where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
+        all_selection_nodes = where_nodes + selection_nodes
 
-        for where_node in where_nodes:
+        for where_node in all_selection_nodes:
             # kalo ada AND di val
             if where_node.val and QueryOperators.AND in where_node.val.upper():
                 return True
 
             # kalau ada AND di childs
-            and_nodes = TreeAnalyzer.find_nodes_by_type(where_node, QueryOperators.AND)
+            and_nodes = TreeAnalyzer.find_nodes_by_type(
+                where_node, QueryOperators.AND)
             if and_nodes:
                 return True
 
@@ -75,58 +82,71 @@ class SelectionRule(OptimizationRule):
 
     def _has_cascaded_selections(self, tree: QueryTree) -> bool:
         where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
+        all_selection_nodes = where_nodes + selection_nodes
 
         # kalau ada lebih dari 1 WHERE node, pasti cascaded
-        if len(where_nodes) > 1:
+        if len(all_selection_nodes) > 1:
             return True
 
         # cek di dalam WHERE node, ada WHERE lagi ga
-        for where_node in where_nodes:
+        for where_node in all_selection_nodes:
             for child in where_node.childs:
-                if TreeAnalyzer.find_nodes_by_type(child, QueryTypes.WHERE):
+                nested = TreeAnalyzer.find_nodes_by_type(
+                    child, QueryTypes.WHERE)
+                nested += TreeAnalyzer.find_nodes_by_type(
+                    child, QueryTypes.SELECTION_STMT)
+                if nested:
                     return True
 
         return False
 
     def _has_selection_over_join_or_product(self, tree: QueryTree) -> bool:
         where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
-        if not where_nodes:
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
+        all_selection_nodes = where_nodes + selection_nodes
+
+        if not all_selection_nodes:
             return False
+
+        # cek kalau ada JOIN atau THETA_JOIN atau CROSS_JOIN
+        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
+        theta_join_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.THETA_JOIN)
+        cross_join_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.CROSS_JOIN)
+
+        all_joins = join_nodes + theta_join_nodes + cross_join_nodes
+
+        if all_joins:
+            self._log(
+                'debug', f"Found {len(all_joins)} join/cross-join nodes with selection")
+            return True
 
         # cari FROM node
         from_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
-        if not from_nodes:
-            return False
-
-        from_node = from_nodes[0]
-
-        # cek kalau ada JOIN di bawah FROM
-        join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.JOIN)
-        if join_nodes:
-            self._log('debug', "Found existing JOIN nodes")
-            return True
-
-        # cek kalau ada CROSS JOIN atau Cartesian product do FP
-        cross_join_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.CROSS_JOIN)
-        if cross_join_nodes:
-            self._log('debug', "Found CROSS JOIN nodes")
-            return True
-
-        # cek Cartesian product: multiple tables pada FROM tanpa JOIN
-        if len(from_node.childs) >= 2:
-            self._log(
-                'debug', f"Found Cartesian product: {len(from_node.childs)} tables in FROM without JOIN")
-            return True
+        if from_nodes:
+            from_node = from_nodes[0]
+            # cek Cartesian product: multiple tables pada FROM tanpa JOIN
+            if len(from_node.childs) >= 2:
+                self._log(
+                    'debug', f"Found Cartesian product: {len(from_node.childs)} tables in FROM without JOIN")
+                return True
 
         return False
 
     def _decompose_conjunctive_selection(self, tree: QueryTree) -> QueryTree:
         self._log('debug', "Decomposing conjunctive selection")
 
-        # cek WHERE nodes dengan multiple conditions
+        # cek WHERE nodes dan SELECTION_STMT dengan multiple conditions
         where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
+        all_selection_nodes = where_nodes + selection_nodes
 
-        for where_node in where_nodes:
+        for where_node in all_selection_nodes:
 
             conditions = ConditionAnalyzer.extract_conditions(where_node)
 
@@ -166,7 +186,8 @@ class SelectionRule(OptimizationRule):
     def _optimize_selection_order(self, tree: QueryTree) -> QueryTree:
         self._log('debug', "Optimizing selection order")
 
-        selection_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.SELECTION_STMT)
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
 
         if len(selection_nodes) <= 1:
             return tree
@@ -189,7 +210,8 @@ class SelectionRule(OptimizationRule):
         if len(nested_selections) <= 1:
             return tree
 
-        sorted_selections = sorted(nested_selections, key=lambda n: selectivity_map.get(id(n), 0.5))
+        sorted_selections = sorted(
+            nested_selections, key=lambda n: selectivity_map.get(id(n), 0.5))
 
         base = sorted_selections[0].childs[0] if sorted_selections[0].childs else None
 
@@ -219,7 +241,8 @@ class SelectionRule(OptimizationRule):
             base = new_sel
 
         if new_root:
-            self._log('debug', f"Reordered {len(nested_selections)} selections by selectivity")
+            self._log(
+                'debug', f"Reordered {len(nested_selections)} selections by selectivity")
             return new_root
 
         return tree
@@ -237,85 +260,89 @@ class SelectionRule(OptimizationRule):
     def _combine_selection_with_join(self, tree: QueryTree) -> QueryTree:
         self._log('debug', "Combining selection with join")
 
-        # FROM and WHERE nodes
-        from_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.FROM)
+        # Find SELECTION_STMT (which contains the WHERE condition) and CROSS_JOIN nodes
+        selection_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.SELECTION_STMT)
         where_nodes = TreeAnalyzer.find_nodes_by_type(tree, QueryTypes.WHERE)
+        cross_join_nodes = TreeAnalyzer.find_nodes_by_type(
+            tree, QueryTypes.CROSS_JOIN)
 
-        if not from_nodes or not where_nodes:
+        all_selection_nodes = selection_nodes + where_nodes
+
+        if not all_selection_nodes or not cross_join_nodes:
+            self._log('debug', "No selection or cross join nodes found")
             return tree
 
-        from_node = from_nodes[0]
-        where_node = where_nodes[0]
+        # Work with the first cross join we find
+        cross_join = cross_join_nodes[0]
+        selection_node = all_selection_nodes[0]
 
-        # cek FROM punya multiple tables (Cartesian product)
-        if len(from_node.childs) >= 2:
-            # Check if WHERE contains a join condition between tables
-            join_condition = self._find_join_condition(where_node, from_node)
+        # Check if selection has a join condition between the tables in cross join
+        join_condition_node = self._find_join_condition_in_selection(
+            selection_node, cross_join)
 
-            if join_condition:
-                # konversi ke JOIN node
-                self._log('info', f"Converting Cartesian product to theta join")
+        if join_condition_node:
+            self._log(
+                'info', f"Converting CROSS_JOIN to THETA_JOIN with condition")
 
-                # generate JOIN node dengan join condition
-                join_node = QueryTree(
-                    type=QueryTypes.JOIN,
-                    val=join_condition['expression'],
-                    childs=from_node.childs[:],
-                    parent=from_node
-                )
+            # Change CROSS_JOIN to THETA_JOIN and add the join condition as a child
+            cross_join.type = QueryTypes.THETA_JOIN
 
-                # update child parents
-                for child in join_node.childs:
-                    child.parent = join_node
+            # Keep the tables as first children, add join condition
+            if join_condition_node not in cross_join.childs:
+                cross_join.childs.append(join_condition_node)
+                join_condition_node.parent = cross_join
 
-                # update FROM child ke JOIN
-                from_node.childs = [join_node]
-
-                # hapus kondisi dari WHERE (karena sudah jadi bagian JOIN)
-                self._remove_condition_from_where(where_node, join_condition)
-
-                self._log(
-                    'debug', f"Successfully converted to JOIN: {join_condition['expression']}")
+            self._log('debug', f"Successfully converted to THETA_JOIN")
 
         return tree
 
-    def _find_join_condition(self, where_node: QueryTree, from_node: QueryTree) -> Optional[dict]:
+    def _find_join_condition_in_selection(self, selection_node: QueryTree, cross_join: QueryTree) -> Optional[QueryTree]:
+        """Find an equality condition between two tables in the selection"""
+        # Get table aliases from cross join
         table_aliases = []
-        for child in from_node.childs:
+        for child in cross_join.childs:
             if child.type == QueryTypes.ALIAS:
-                table_aliases.append(child.val)
+                if child.val:
+                    table_aliases.append(child.val)
+                elif child.alias:
+                    table_aliases.append(child.alias)
 
-        def find_equality_between_tables(node: QueryTree) -> Optional[dict]:
+        def find_equality_condition(node: QueryTree) -> Optional[QueryTree]:
+            """Recursively search for equality between different tables"""
             if node.type == QueryTypes.OPERATOR and node.val == QueryOperators.EQ:
-                # cek apakah kedua sisi adalah kolom dari tabel berbeda
+                # Check if both sides are columns from different tables
                 if len(node.childs) >= 2:
                     left = node.childs[0]
                     right = node.childs[1]
 
                     if left.type == QueryTypes.COLUMN and right.type == QueryTypes.COLUMN:
-                        left_parts = left.val.split('.')
-                        right_parts = right.val.split('.')
+                        # Extract table aliases from column references
+                        left_val = left.val if left.val else ""
+                        right_val = right.val if right.val else ""
+
+                        left_parts = left_val.split('.')
+                        right_parts = right_val.split('.')
 
                         if len(left_parts) >= 2 and len(right_parts) >= 2:
                             left_table = left_parts[0]
                             right_table = right_parts[0]
 
-                            if left_table != right_table and left_table in table_aliases and right_table in table_aliases:
-                                return {
-                                    'expression': f"{left.val} = {right.val}",
-                                    'left_table': left_table,
-                                    'right_table': right_table,
-                                    'node': node
-                                }
+                            # Check if this is a join between two different tables
+                            if left_table != right_table:
+                                self._log(
+                                    'debug', f"Found join condition: {left_val} = {right_val}")
+                                return node
 
+            # Recursively check children
             for child in node.childs:
-                result = find_equality_between_tables(child)
+                result = find_equality_condition(child)
                 if result:
                     return result
 
             return None
 
-        return find_equality_between_tables(where_node)
+        return find_equality_condition(selection_node)
 
     def _remove_condition_from_where(self, where_node: QueryTree, condition: dict):
         if not where_node or not where_node.childs or 'node' not in condition:
@@ -336,7 +363,8 @@ class SelectionRule(OptimizationRule):
             return
 
         if where_condition.type == QueryTypes.OPERATOR and where_condition.val == QueryOperators.AND:
-            new_children = [c for c in where_condition.childs if c != condition_to_remove]
+            new_children = [
+                c for c in where_condition.childs if c != condition_to_remove]
 
             if len(new_children) == 0:
                 if where_node.parent:

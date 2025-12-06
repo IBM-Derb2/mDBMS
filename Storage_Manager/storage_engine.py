@@ -56,47 +56,69 @@ class StorageEngine:
 
         schema_dict = self.serializer.deserialize_schema(schema)
 
-        candidate_indices = None
-        use_index = (
-            data_retrieval.search_type == "index"
-            and data_retrieval.index_column is not None
+        # if possible, use index scan
+        candidate_indices = self._get_candidate_indices(
+            data_retrieval, table, schema_dict)
+
+        # if buffer has dirty data for this table (optimization)
+        has_dirty_buffer = any(
+            buffered_row.table_name == table
+            for buffered_row in self.frm.buffer_manager.buffer_data.values()
         )
 
-        if use_index:
-            target_col = data_retrieval.index_column
-            search_value = self._extract_search_value(
-                data_retrieval.conditions, target_col)
+        # read rows from disk
+        disk_rows = self._read_disk_rows(
+            data_file, schema_dict, candidate_indices)
 
-            if search_value is not None:
-                hash_index_file = self._get_index_path(
-                    table, target_col, "hash")
-                if os.path.exists(hash_index_file):
-                    candidate_indices = self._scan_using_hash_index(
-                        hash_index_file, search_value)
-                else:
-                    btree_index_file = self._get_index_path(
-                        table, target_col, "btree")
-                    if os.path.exists(btree_index_file):
-                        candidate_indices = self._scan_using_btree_index(
-                            btree_index_file, search_value)
+        # merge with buffer if needed
+        if has_dirty_buffer:
+            rows = self._merge_buffer_with_disk(disk_rows, table, schema_dict)
+        else:
+            rows = disk_rows
 
-        result_rows = Rows()
-        target_columns = set(data_retrieval.column)
-        wants_all_columns = "*" in target_columns or not target_columns
+        # apply conditions and projection
+        return self._apply_query_filters(rows, table, data_retrieval)
 
-        # index-based random access read
+    def _get_candidate_indices(self, data_retrieval: DataRetrieval, table: str, schema_dict: dict) -> Optional[List[int]]:
+
+        if data_retrieval.search_type != "index" or data_retrieval.index_column is None:
+            return None
+
+        target_col = data_retrieval.index_column
+        
+        # equality search first (=)
+        search_value = self._extract_search_value(data_retrieval.conditions, target_col)
+        if search_value is not None:
+            hash_index_file = self._get_index_path(table, target_col, "hash")
+            if os.path.exists(hash_index_file):
+                return self._scan_using_hash_index(hash_index_file, search_value)
+
+            btree_index_file = self._get_index_path(table, target_col, "btree")
+            if os.path.exists(btree_index_file):
+                return self._scan_using_btree_index(btree_index_file, equality=search_value)
+        
+        # range search (>, <, >=, <=), only B+ tree supports this
+        range_bounds = self._extract_range_bounds(data_retrieval.conditions, target_col)
+        if range_bounds is not None:
+            btree_index_file = self._get_index_path(table, target_col, "btree")
+            if os.path.exists(btree_index_file):
+                return self._scan_using_btree_index(btree_index_file, range_bounds=range_bounds)
+
+        return None
+
+    def _read_disk_rows(self, data_file: str, schema_dict: dict, candidate_indices: Optional[List[int]]) -> List[dict]:
+
         if candidate_indices is not None:
+            # index-based random access read
             row_size = self.serializer.get_row_size(schema_dict["columns"])
             rows_per_block = self.BLOCK_SIZE // row_size
+            disk_rows = []
 
             with open(data_file, "rb") as f:
                 for idx in candidate_indices:
-
-                    # kalkulasi offset
                     block_idx = idx // rows_per_block
                     inner_idx = idx % rows_per_block
-                    byte_offset = (block_idx * self.BLOCK_SIZE) + \
-                        (inner_idx * row_size)
+                    byte_offset = (block_idx * self.BLOCK_SIZE) + (inner_idx * row_size)
 
                     f.seek(byte_offset)
                     row_binary = f.read(row_size)
@@ -106,77 +128,70 @@ class StorageEngine:
 
                     row = self.serializer.deserialize_single_row(
                         row_binary, schema_dict["columns"])
-                    row = {k.lower(): v for k, v in row.items()}
-
-                    if self._matches_conditions(row, data_retrieval.conditions):
-                        if wants_all_columns:
-                            result_rows.data.append(row)
-                        else:
-                            result_rows.data.append(
-                                {k: v for k, v in row.items() if k in target_columns})
-                        result_rows.idx.append(idx)
-
-        # full table scan (fallback)
+                    disk_rows.append(row)
         else:
-            # pk columns untuk buffer-disk merge
-            pk_columns = [col["name"].lower()
-                          for col in schema_dict["columns"] if col.get("primary_key")]
-            if not pk_columns:
-                pk_columns = [schema_dict["columns"][0]["name"].lower()]
-
-            buffered_rows_map = {}
-            deleted_pk_tuples = set()
-            for key, buffered_row in self.frm.buffer_manager.buffer_data.items():
-                if buffered_row.table_name == table:
-                    pk_lower = {k.lower(): v for k, v in buffered_row.primary_key_value.items()}
-                    pk_tuple = tuple(sorted(pk_lower.items()))
-                    if buffered_row.is_deleted:
-                        deleted_pk_tuples.add(pk_tuple)
-                    else:
-                        buffered_rows_map[pk_tuple] = buffered_row.data
-
+            # full table scan
             with open(data_file, "rb") as f:
                 binary_data = f.read()
-
-            rows_data = self.serializer.deserialize_with_blocks(
+            disk_rows = self.serializer.deserialize_with_blocks(
                 binary_data, schema_dict["columns"])
 
-            # merge buffer dengan disk
-            merged_rows = []
-            processed_buffer_keys = set()
+        return disk_rows
 
-            for disk_row in rows_data:
-                row_lower = {k.lower(): v for k, v in disk_row.items()}
-                pk_value = {pk_col: row_lower[pk_col] for pk_col in pk_columns}
-                pk_tuple = tuple(sorted(pk_value.items()))
+    def _merge_buffer_with_disk(self, disk_rows: List[dict], table: str, schema_dict: dict) -> List[dict]:
 
-                if pk_tuple in deleted_pk_tuples:
-                    # dihapus di buffer
-                    continue
-                elif pk_tuple in buffered_rows_map:
-                    # pakai data buffer
-                    merged_rows.append(buffered_rows_map[pk_tuple])
-                    processed_buffer_keys.add(pk_tuple)
+        pk_columns = [col["name"]
+                      for col in schema_dict["columns"] if col.get("primary_key")]
+        if not pk_columns:
+            pk_columns = [schema_dict["columns"][0]["name"]]
+
+        buffered_rows_map = {}
+        deleted_pk_tuples = set()
+
+        for key, buffered_row in self.frm.buffer_manager.buffer_data.items():
+            if buffered_row.table_name == table:
+                pk_tuple = tuple(sorted(buffered_row.primary_key_value.items()))
+                if buffered_row.is_deleted:
+                    deleted_pk_tuples.add(pk_tuple)
                 else:
-                    # pakai data disk
-                    merged_rows.append(disk_row)
+                    buffered_rows_map[pk_tuple] = buffered_row.data
 
-            # tambah baris dari buffer yang belum ada di disk
-            for pk_tuple, buffered_data in buffered_rows_map.items():
-                if pk_tuple not in processed_buffer_keys:
-                    merged_rows.append(buffered_data)
+        merged_rows = []
+        processed_buffer_keys = set()
 
-            # project
-            for idx, row in enumerate(merged_rows):
-                row = {k.lower(): v for k, v in row.items()}
+        for disk_row in disk_rows:
+            pk_value = {pk_col: disk_row[pk_col] for pk_col in pk_columns}
+            pk_tuple = tuple(sorted(pk_value.items()))
 
-                if self._matches_conditions(row, data_retrieval.conditions):
-                    if wants_all_columns:
-                        result_rows.data.append(row)
-                    else:
-                        result_rows.data.append(
-                            {k: v for k, v in row.items() if k in target_columns})
-                    result_rows.idx.append(idx)
+            if pk_tuple in deleted_pk_tuples:
+                continue  # skip deleted rows
+            elif pk_tuple in buffered_rows_map:
+                merged_rows.append(buffered_rows_map[pk_tuple])
+                processed_buffer_keys.add(pk_tuple)
+            else:
+                merged_rows.append(disk_row)
+
+        # add buffer-only rows (new inserts not yet on disk)
+        for pk_tuple, buffered_data in buffered_rows_map.items():
+            if pk_tuple not in processed_buffer_keys:
+                merged_rows.append(buffered_data)
+
+        return merged_rows
+
+    def _apply_query_filters(self, rows: List[dict], table: str, data_retrieval: DataRetrieval) -> Rows:
+
+        result_rows = Rows()
+        target_columns = set(data_retrieval.column)
+        wants_all_columns = "*" in target_columns or not target_columns
+
+        for idx, row in enumerate(rows):
+            if self._matches_conditions(row, data_retrieval.conditions):
+                if wants_all_columns:
+                    result_rows.data.append(row)
+                else:
+                    result_rows.data.append(
+                        {k: v for k, v in row.items() if k in target_columns})
+                result_rows.idx.append(idx)
 
         result_rows.rows_count = len(result_rows.data)
         result_rows.table_name = table
@@ -207,9 +222,7 @@ class StorageEngine:
         col_type = None
         if data_write.column:
             for col in schema_dict["columns"]:
-                col_name_lower = col["name"].lower()
-                target_col_lower = data_write.column[0].lower()
-                if col_name_lower == target_col_lower:
+                if col["name"] == data_write.column[0]:
                     col_type = col["type"]
                     break
 
@@ -240,7 +253,7 @@ class StorageEngine:
                         if i < len(data_write.new_value):
                             value = data_write.new_value[i]
                             col_schema = next(
-                                (c for c in schema_dict["columns"] if c["name"].lower() == col_name.lower()), None)
+                                (c for c in schema_dict["columns"] if c["name"] == col_name), None)
                             if col_schema:
                                 expected_type = self.TYPE_MAPPING.get(
                                     col_schema["type"])
@@ -254,7 +267,7 @@ class StorageEngine:
                     col_name = data_write.column[0]
                     
                     col_schema = next(
-                        (c for c in schema_dict["columns"] if c["name"].lower() == col_name.lower()), None)
+                        (c for c in schema_dict["columns"] if c["name"] == col_name), None)
                     if col_schema:
                         expected_type = self.TYPE_MAPPING.get(
                             col_schema["type"])
@@ -283,7 +296,7 @@ class StorageEngine:
                     )
 
             # cek duplikasi di buffer
-            pk_value_dict = {pk_col.lower(): new_row.get(pk_col) for pk_col in pk_columns}
+            pk_value_dict = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
             buffered_row = self.frm.get_buffered_row(table, pk_value_dict)
             if buffered_row is not None:
                 pk_values = {pk_col: new_row.get(pk_col) for pk_col in pk_columns}
@@ -305,6 +318,14 @@ class StorageEngine:
             new_idx = len(rows_data)
             updated_rows.idx.append(new_idx)
 
+            self._update_indexes(
+                table=table,
+                operation="insert",
+                row_idx=new_idx,
+                row=new_row,
+                modified_columns=set(new_row.keys())
+            )
+
         # UPDATE (dengan conditions)
         else:
             # pk for buffer
@@ -314,14 +335,12 @@ class StorageEngine:
                 pk_columns = [schema_dict["columns"][0]["name"]]
 
             # merge buffer dengan disk
-            pk_columns_lower = [pk.lower() for pk in pk_columns]
             buffered_rows_map = {}
             deleted_pk_tuples = set()
 
             for key, buffered_row in self.frm.buffer_manager.buffer_data.items():
                 if buffered_row.table_name == table:
-                    pk_lower = {k.lower(): v for k, v in buffered_row.primary_key_value.items()}
-                    pk_tuple = tuple(sorted(pk_lower.items()))
+                    pk_tuple = tuple(sorted(buffered_row.primary_key_value.items()))
                     if buffered_row.is_deleted:
                         deleted_pk_tuples.add(pk_tuple)
                     else:
@@ -331,8 +350,7 @@ class StorageEngine:
             processed_buffer_keys = set()
 
             for disk_row in rows_data:
-                row_lower = {k.lower(): v for k, v in disk_row.items()}
-                pk_value = {pk_col: row_lower[pk_col] for pk_col in pk_columns_lower}
+                pk_value = {pk_col: disk_row[pk_col] for pk_col in pk_columns}
                 pk_tuple = tuple(sorted(pk_value.items()))
 
                 if pk_tuple in deleted_pk_tuples:
@@ -352,13 +370,11 @@ class StorageEngine:
 
             for i, row in enumerate(merged_rows):
                 if self._matches_conditions(row, data_write.conditions):
-                    target_col_original = self._get_case_insensitive(
-                        row, data_write.column[0], value_only=False)
-                    if not target_col_original:
+                    target_col = data_write.column[0]
+                    if target_col not in row:
                         continue
 
-                    old_values = {target_col_original: row.get(
-                        target_col_original)}
+                    old_values = {target_col: row.get(target_col)}
 
                     updated_row = row.copy()
 
@@ -371,10 +387,10 @@ class StorageEngine:
                             continue
 
                         coerced_value = self._coerce_type(calc_value, expected_type, col_type)
-                        updated_row[target_col_original] = coerced_value
+                        updated_row[target_col] = coerced_value
                     else:
                         coerced_value = self._coerce_type(data_write.new_value, expected_type, col_type)
-                        updated_row[target_col_original] = coerced_value
+                        updated_row[target_col] = coerced_value
 
                     pk_value_dict = {pk_col: updated_row.get(pk_col) for pk_col in pk_columns}
                     self.frm.buffer_manager.write_block(
@@ -382,6 +398,15 @@ class StorageEngine:
                         table_name=table,
                         pk_value=pk_value_dict,
                         new_data=updated_row
+                    )
+
+                    self._update_indexes(
+                        table=table,
+                        operation="update",
+                        row_idx=i,
+                        row=updated_row,
+                        modified_columns=modified_columns,
+                        old_values=old_values
                     )
 
                     updated_rows.data.append(updated_row)
@@ -433,6 +458,7 @@ class StorageEngine:
             data_deletion.conditions) > 0
 
         transaction_id = getattr(data_deletion, 'transaction_id', 0)
+        deleted_indices = []
 
         for i, row in enumerate(all_rows):
             should_delete = False
@@ -450,7 +476,15 @@ class StorageEngine:
                     pk_value=pk_value_dict,
                     old_data=row
                 )
+                deleted_indices.append((i, row))
                 deleted_count += 1
+
+        if deleted_indices:
+            self._update_indexes(
+                table=table_name,
+                operation="delete",
+                deleted_indices=deleted_indices
+            )
 
         return deleted_count
 
@@ -521,7 +555,7 @@ class StorageEngine:
         for i, row in enumerate(rows_data):
             val = row.get(column)
             if val is not None:
-                indexer.insert(val, i)
+                indexer.insert(self._normalize_index_key(val), i)
 
         indexer.save(index_filename)
 
@@ -686,7 +720,7 @@ class StorageEngine:
             return True
 
         for condition in conditions:
-            column_value = self._get_case_insensitive(row, condition.column)
+            column_value = row.get(condition.column)
 
             if column_value is None:
                 return False
@@ -715,14 +749,59 @@ class StorageEngine:
 
         if not conditions:
             return None
-        target_col_lower = target_col.lower() if isinstance(
-            target_col, str) else target_col
         for cond in conditions:
-            cond_col_lower = cond.column.lower() if isinstance(
-                cond.column, str) else cond.column
-            if cond_col_lower == target_col_lower and cond.operation == "=":
+            if cond.column == target_col and cond.operation == "=":
                 return cond.operand
         return None
+    
+    def _normalize_index_key(self, value: Any) -> str:
+        """Normalize index key for consistent lexicographic ordering.
+        Numbers are zero-padded: 2.5 -> '002.50', 10.3 -> '010.30'
+        Strings are returned as-is.
+        """
+        if isinstance(value, (int, float)):
+            # Format as zero-padded: width=6, 2 decimals -> '002.50'
+            return f"{float(value):06.2f}"
+        return str(value)
+    
+    def _extract_range_bounds(self, conditions: Optional[List], target_col: str) -> Optional[tuple]:
+
+        if not conditions:
+            return None
+        
+        min_val = None
+        max_val = None
+        
+        for cond in conditions:
+            if cond.column != target_col:
+                continue
+            
+            if cond.operation in (">", ">="):
+                min_val = self._normalize_index_key(cond.operand)
+            elif cond.operation in ("<", "<="):
+                max_val = self._normalize_index_key(cond.operand)
+        
+        # if found at least one bound
+        return (min_val, max_val) if (min_val is not None or max_val is not None) else None
+    
+    def _scan_using_hash_index(self, index_path: str, search_key: Any) -> List[int]:
+        indexer = HashIndex()
+        indexer.load(index_path)
+        return indexer.search(self._normalize_index_key(search_key))
+
+    def _scan_using_btree_index(self, index_path: str, equality: Any = None, range_bounds: tuple = None) -> List[int]:
+        """Scan B+ tree for exact match or range."""
+        indexer = BPlusTreeIndex.load(index_path)
+        
+        if equality is not None:
+            result = indexer.search(self._normalize_index_key(equality))
+        elif range_bounds is not None:
+            min_val, max_val = range_bounds
+            result = indexer.search_range(min_val, max_val)
+        else:
+            return []
+        
+        return result if result else []
 
     def _evaluate_expression(self, expr_list: list, row: dict) -> Union[int, float]:
 
@@ -738,8 +817,8 @@ class StorageEngine:
         for item in expr_list:
             if isinstance(item, str) and item not in ['+', '-', '*', '/']:
 
-                # nama kolom, ambil nilainya dari row (case-insensitive)
-                val = self._get_case_insensitive(row, item, value_only=True)
+                # nama kolom, ambil nilainya dari row
+                val = row.get(item)
                 if val is None:
                     raise ValueError(f"Column '{item}' not found in row")
                 try:
@@ -806,20 +885,12 @@ class StorageEngine:
 
         return resolved[0]
 
-    def _get_case_insensitive(self, row: dict, column: str, value_only: bool = True):
-        """Case-insensitive column lookup. Returns value by default, or key if value_only=False"""
-        column_lower = column.lower()
-        for k, v in row.items():
-            if k.lower() == column_lower:
-                return v if value_only else k
-        return None
-    
     def _update_indexes(self, table: str, operation: str, row_idx: int = None, row: dict = None,
                         modified_columns: set = None, old_values: dict = None, deleted_indices: list = None) -> None:
 
         if operation == "insert":
             for col in modified_columns:
-                val = self._get_case_insensitive(row, col)
+                val = row.get(col)
                 if val is None:
                     continue
 
@@ -833,13 +904,13 @@ class StorageEngine:
                 btree_file = self._get_index_path(table, col, "btree")
                 if os.path.exists(btree_file):
                     idx = BPlusTreeIndex.load(btree_file)
-                    idx.insert(val, row_idx)
+                    idx.insert(str(val), row_idx)
                     idx.save(btree_file)
 
         elif operation == "update":
             for col in modified_columns:
                 old_val = old_values.get(col)
-                new_val = self._get_case_insensitive(row, col)
+                new_val = row.get(col)
 
                 if old_val == new_val:
                     continue
