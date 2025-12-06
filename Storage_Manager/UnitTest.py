@@ -16,7 +16,7 @@ from Failure_Recovery.failure_recovery_manager import FailureRecoveryManager
 
 class TestStorageEngine(unittest.TestCase): # Main runs all methods that start with 'test_'
     
-    DATA_DIR = ""
+    DATA_DIR = "Storage_Manager"
     
     @classmethod
     def setUpClass(cls):
