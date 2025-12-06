@@ -1,5 +1,10 @@
 from datetime import datetime
 import time
+import os
+import glob
+import traceback
+import re
+
 from dataclasses import dataclass
 from typing import List, Optional, Union
 
@@ -10,7 +15,6 @@ from Storage_Manager.utils import Condition, DataRetrieval, DataWrite, DataDelet
 
 @dataclass
 class ClientSession:
-    """Per-client transaction session state"""
     current_transaction_id: Optional[str] = None
     multiple_transaction: bool = False
     explicit_transaction: bool = False
@@ -40,17 +44,17 @@ class QueryProcessor:
 
     CCM_RETRY_MAX = 5
     CCM_RETRY_DELAY = 0.1
-    DEBUG = True  # Set to True to print full tracebacks
+    DEBUG = True 
 
     def __init__(self, optimizer, storage_manager, cc_manager):
         self.optimizer = optimizer
         self.storage_manager = storage_manager
         self.cc_manager = cc_manager
 
-        # Per-client session tracking: key = "ip:port", value = ClientSession
+        # session tracking: key = "ip:port", value = ClientSession
         self.client_sessions = {}
 
-        # Legacy fields kept for backward compatibility (non-client scenarios)
+        # legacy
         self.current_transaction_id = None
         self.multiple_transaction = False
         self.explicit_transaction = False
@@ -59,9 +63,7 @@ class QueryProcessor:
         self.transaction_failed = False
 
     def _get_client_session(self, client_address: tuple = None) -> ClientSession:
-        """Get or create a session for the given client address"""
         if not client_address:
-            # Legacy mode: use instance variables
             return None
 
         client_key = f"{client_address[0]}:{client_address[1]}"
@@ -70,11 +72,9 @@ class QueryProcessor:
         return self.client_sessions[client_key]
 
     def _cleanup_client_session(self, client_address: tuple):
-        """Remove client session after transaction ends"""
         if client_address:
             client_key = f"{client_address[0]}:{client_address[1]}"
             if client_key in self.client_sessions:
-                # Only cleanup if no active transaction
                 session = self.client_sessions[client_key]
                 if not session.multiple_transaction:
                     del self.client_sessions[client_key]
@@ -82,10 +82,8 @@ class QueryProcessor:
     # for anyone who still don't know, this is the entry point ...
 
     def execute_query(self, query: str, client_address: tuple = None) -> List[ExecutionResult]:
-        # Get client session or use legacy mode
         session = self._get_client_session(client_address)
 
-        # Use session state if available, otherwise use instance state (legacy)
         if session:
             current_transaction_id = session.current_transaction_id
             multiple_transaction = session.multiple_transaction
@@ -119,14 +117,12 @@ class QueryProcessor:
             return [self._handle_set_concurrency(query, client_address)]
 
         if explicit_transaction:
-            # in failed state
             if transaction_failed:
                 return [self._create_error_result(
                     query,
                     f"Transaction {current_transaction_id} has failed. Please ROLLBACK before proceeding."
                 )]
 
-            # validate query syntax even in transaction mode
             if not query.endswith(";"):
                 if session:
                     session.transaction_failed = True
@@ -154,7 +150,6 @@ class QueryProcessor:
                         result = self._process_node(optimized_query.query_tree)
                         message = result.message if result.message else f"Query returned {result.rows_count} row(s)"
 
-                        # track query for commit count
                         query_storage.append(query)
 
                         return [ExecutionResult(
@@ -167,7 +162,6 @@ class QueryProcessor:
                         )]
                     except Exception as exec_error:
                         print(f"[QP] SELECT execution error: {exec_error}")
-                        import traceback
                         traceback.print_exc()
                         if session:
                             session.transaction_failed = True
@@ -186,7 +180,6 @@ class QueryProcessor:
                         result = self._process_node(optimized_query.query_tree)
                         message = result.message if result.message else f"Query affected {result.rows_count} row(s)"
 
-                        # track query for commit count
                         query_storage.append(query)
 
                         # return result immediately (data in buffer, pending commit to disk)
@@ -202,7 +195,6 @@ class QueryProcessor:
                         print(
                             f"[QP] Write operation execution error: {exec_error}")
                         if self.DEBUG:
-                            import traceback
                             traceback.print_exc()
                         if session:
                             session.transaction_failed = True
@@ -217,7 +209,6 @@ class QueryProcessor:
                     f"[QP] Query parsing failed in transaction {current_transaction_id}")
                 print(f"[QP] Error: {error_msg}")
                 if self.DEBUG:
-                    import traceback
                     traceback.print_exc()
                 if session:
                     session.transaction_failed = True
@@ -230,10 +221,8 @@ class QueryProcessor:
         if not query.endswith(";"):
             return [self._create_error_result(query, "Query must end with a semicolon")]
 
-        # Get session for auto-commit mode to properly clean up after commit
         session = self._get_client_session(client_address)
 
-        # Check if client has an active transaction (use session if available)
         current_tx_id = session.current_transaction_id if session else self.current_transaction_id
 
         try:
@@ -245,7 +234,6 @@ class QueryProcessor:
             optimized_query = self.optimizer.optimize_query(parsed_query)
             result = self._process_node(optimized_query.query_tree)
 
-            # Not mask failures with generic "success" message
             message = result.message if result.message else f"Query returned {result.rows_count} row(s)"
 
             execution_result = ExecutionResult(
@@ -264,7 +252,6 @@ class QueryProcessor:
             error_msg = str(e)
             print(f"[QP] Error: {error_msg}")
             if self.DEBUG:
-                import traceback
                 traceback.print_exc()
             if self.current_transaction_id is not None:
                 self._rollback(session)
@@ -274,10 +261,8 @@ class QueryProcessor:
     # tektokan sama CCM, transactions
 
     def _handle_begin_transaction(self, query: str, client_address: tuple = None) -> ExecutionResult:
-        # Get or create client session
         session = self._get_client_session(client_address)
 
-        # Use session state if available, otherwise use instance state (legacy)
         if session:
             current_transaction_id = session.current_transaction_id
             multiple_transaction = session.multiple_transaction
@@ -285,7 +270,6 @@ class QueryProcessor:
             current_transaction_id = self.current_transaction_id
             multiple_transaction = self.multiple_transaction
 
-        # Check if a transaction is already active for this client
         if multiple_transaction and current_transaction_id is not None:
             return ExecutionResult(
                 transaction_id=current_transaction_id,
@@ -294,20 +278,16 @@ class QueryProcessor:
                 message=f"Error: Transaction {current_transaction_id} is already active. COMMIT or ROLLBACK first."
             )
 
-        # Extract client IP and port from address tuple
         if client_address:
-            # For real client connections
             client_ip = client_address[0]
             client_port = client_address[1]
         else:
-            # For unittests and non-client scenarios
             client_ip = None
             client_port = None
 
         new_transaction_id = self.cc_manager.begin_transaction(
             client_ip, client_port)
 
-        # Update session or instance state
         if session:
             session.current_transaction_id = new_transaction_id
             session.multiple_transaction = True
@@ -328,10 +308,8 @@ class QueryProcessor:
         )
 
     def _handle_commit(self, query: str, client_address: tuple = None) -> List[ExecutionResult]:
-        # Get client session
         session = self._get_client_session(client_address)
 
-        # Use session state if available, otherwise use instance state
         if session:
             current_transaction_id = session.current_transaction_id
             multiple_transaction = session.multiple_transaction
@@ -343,7 +321,6 @@ class QueryProcessor:
             transaction_failed = self.transaction_failed
             query_storage = self.query_storage
 
-        # Check if there's an active explicit transaction
         if not multiple_transaction and current_transaction_id is None:
             return [ExecutionResult(
                 transaction_id=0,
@@ -360,16 +337,12 @@ class QueryProcessor:
                 f"Cannot COMMIT - transaction {current_transaction_id} has failed. Please ROLLBACK."
             )]
 
-        # Count queries executed in this transaction (from query_storage)
         query_count = len(query_storage)
 
-        # Save TID before commit clears it
         committed_tid = current_transaction_id
 
-        # Commit will flush buffer to disk (queries already executed)
         self._commit(session)
 
-        # Return commit summary with query count
         return [ExecutionResult(
             transaction_id=committed_tid,
             query=query,
@@ -379,10 +352,8 @@ class QueryProcessor:
         )]
 
     def _handle_rollback(self, query: str, client_address: tuple = None) -> ExecutionResult:
-        # Get client session
         session = self._get_client_session(client_address)
 
-        # Use session state if available, otherwise use instance state
         if session:
             current_transaction_id = session.current_transaction_id
             multiple_transaction = session.multiple_transaction
@@ -421,12 +392,10 @@ class QueryProcessor:
 
     def _handle_set_concurrency(self, query: str, client_address: tuple = None) -> ExecutionResult:
 
-        # SET CONCURRENCY TO <mechanism>;
-        # Supported mechanisms: LOCK-BASED, TIMESTAMP-BASED, VALIDATION-BASED, MULTI-VERSION
+        # SET CONCURRENCY TO <mechanism>; 
+        # mechanisms: LOCK-BASED, TIMESTAMP-BASED, VALIDATION-BASED, MULTI-VERSION
 
         try:
-            # Parse the command
-            # Expected format: "SET CONCURRENCY TO <mechanism>;"
             query_clean = query.strip().rstrip(';').upper()
             parts = query_clean.split()
 
@@ -437,14 +406,11 @@ class QueryProcessor:
                     timestamp=datetime.now(),
                     message="Error: Invalid syntax. Use: SET CONCURRENCY TO <mechanism>;"
                 )
-
-            # Get mechanism name
+            
             mechanism_parts = parts[3:]
             mechanism = "-".join(mechanism_parts).lower()
-
-            # Validate mechanism
-            valid_mechanisms = ["lock-based", "timestamp-based",
-                                "validation-based", "multi-version"]
+            
+            valid_mechanisms = ["lock-based", "timestamp-based", "validation-based", "multi-version"]
             if mechanism not in valid_mechanisms:
                 return ExecutionResult(
                     transaction_id=0,
@@ -453,11 +419,9 @@ class QueryProcessor:
                     message=f"Error: Unknown concurrency mechanism '{mechanism}'. "
                     f"Valid options: {', '.join(valid_mechanisms)}"
                 )
-
-            # Switch the mechanism
+            
             self.cc_manager.set_concurrency_mechanism(mechanism)
-
-            # Get stats to confirm
+            
             stats = self.cc_manager.get_statistics()
             strategy_name = stats.get("strategy", "Unknown")
 
@@ -551,10 +515,6 @@ class QueryProcessor:
             table, self.current_transaction_id, action)
 
     def _get_case_insensitive(self, row: dict, key: str, value_only: bool = False):
-        """
-        Get value from row dictionary with case-insensitive key matching.
-        If value_only is True, returns only the value, otherwise returns (key, value) tuple.
-        """
         key_lower = key.lower()
         for k, v in row.items():
             if k.lower() == key_lower:
@@ -623,11 +583,11 @@ class QueryProcessor:
 
     def _process_relation(self, node) -> Rows:
 
-        # R(table): baca seluruh isi tabel
+        # baca seluruh isi tabel
         table_name = node.val
         self._validate_ccm(table_name, "read")
 
-        # Log SELECT activity
+        # Log activity
         if self.current_transaction_id:
             self.cc_manager.log_operation(
                 transaction_id=self.current_transaction_id,
@@ -852,32 +812,26 @@ class QueryProcessor:
                     # Each child in VALUES is a value literal
                     vals = [c.val for c in child.childs]
 
-        # Debug logging
-        print(f"[QP] INSERT - table: {table}, cols: {cols}, vals: {vals}")
+        # # Debug logging
+        # print(f"[QP] INSERT - table: {table}, cols: {cols}, vals: {vals}")
 
-        # Validate with CC
         self._validate_ccm(table, "write")
 
-        # Prepare the new row data for logging
-        # Get schema to build complete row
         schema_file = self.storage_manager._get_schema_path(table)
         with open(schema_file, "rb") as f:
             schema = f.read()
         schema_dict = self.storage_manager.serializer.deserialize_schema(
             schema)
 
-        # Build new_row with defaults
         new_row = {}
         for col in schema_dict["columns"]:
             new_row[col["name"]] = self.storage_manager.TYPE_DEFAULTS.get(
-                col["type"], None)        # Fill in provided values
+                col["type"], None)
         if not cols:
-            # No columns specified, use schema order
             for i, col in enumerate(schema_dict["columns"]):
                 if i < len(vals):
                     new_row[col["name"]] = vals[i]
         else:
-            # Columns specified
             for i, col_name in enumerate(cols):
                 if i < len(vals):
                     new_row[col_name] = vals[i]
@@ -895,7 +849,6 @@ class QueryProcessor:
                 table_name=table
             )
 
-        # Execute the insert
         dw = DataWrite(table=table, column=cols, conditions=[], new_value=vals,
                        transaction_id=self.current_transaction_id)
         cnt = self.storage_manager.write_block(dw)
@@ -915,7 +868,6 @@ class QueryProcessor:
 
         for child in node.childs[1:]:
             if child.type == QueryTypes.SET:
-                # Process all assignments, not just the first one
                 for assign_node in child.childs:
                     if assign_node.type == QueryTypes.ASSIGNMENT:
                         col.append(assign_node.childs[0].val)
@@ -930,11 +882,8 @@ class QueryProcessor:
                 if child.childs:
                     conditions = self._extract_conditions(child.childs[0])
 
-        # Use table-level locking for UPDATE operations
-        # (Row-level locking causes issues during strategy switching)
         self._validate_ccm(table, "write")
 
-        # Log operation (after validate, before storage)
         if self.current_transaction_id:
             self.cc_manager.log_operation(
                 transaction_id=self.current_transaction_id,
@@ -962,11 +911,8 @@ class QueryProcessor:
             if where_node.childs:
                 conditions = self._extract_conditions(where_node.childs[0])
 
-        # Use table-level locking for DELETE operations
-        # (Row-level locking causes issues during strategy switching)
         self._validate_ccm(table, "write")
-
-        # Log operation (after validate, before storage)
+        
         if self.current_transaction_id:
             self.cc_manager.log_operation(
                 transaction_id=self.current_transaction_id,
@@ -974,8 +920,7 @@ class QueryProcessor:
                 table_name=table
             )
 
-        # Check and handle foreign key constraints before delete
-        # First, get the rows that will be deleted
+        # handle foreign key before delete
         dr = DataRetrieval(table=table, column=[], conditions=conditions)
         rows_to_delete = self.storage_manager.read_block(dr)
 
@@ -1014,20 +959,7 @@ class QueryProcessor:
 
     # tektok sama SM, DDL (bonus)
 
-    def _parse_create_table_sql(self, query: str) -> dict:
-        """
-        Parse CREATE TABLE SQL directly to support constraints.
-        Format: CREATE TABLE name (
-            col1 TYPE [PRIMARY KEY],
-            col2 TYPE [REFERENCES other_table(col) [ON DELETE CASCADE|RESTRICT]],
-            ...
-            [PRIMARY KEY (col1, col2, ...)],
-            [FOREIGN KEY (col) REFERENCES other_table(ref_col) [ON DELETE CASCADE|RESTRICT]]
-        );
-        """
-        import re
-
-        # Extract table name and column definitions
+    def _parse_create_table_sql(self, query: str) -> dict:        
         match = re.match(
             r'CREATE\s+TABLE\s+(\w+)\s*\(\s*(.+)\s*\)\s*;?\s*$',
             query.strip(),
@@ -1039,21 +971,19 @@ class QueryProcessor:
 
         table_name = match.group(1)
         col_defs_str = match.group(2)
-
-        # Split by comma, but handle nested parentheses
+        
         parts = self._split_column_defs(col_defs_str)
 
         columns = []
-        table_constraints = []  # For table-level PRIMARY KEY and FOREIGN KEY
-
+        table_constraints = []
+        
         for part in parts:
             part = part.strip()
             if not part:
                 continue
 
             part_upper = part.upper()
-
-            # Table-level PRIMARY KEY constraint
+            
             if part_upper.startswith("PRIMARY KEY"):
                 pk_match = re.match(
                     r'PRIMARY\s+KEY\s*\(\s*(.+?)\s*\)', part, re.IGNORECASE)
@@ -1062,8 +992,7 @@ class QueryProcessor:
                     table_constraints.append(
                         {"type": "primary_key", "columns": pk_cols})
                 continue
-
-            # Table-level FOREIGN KEY constraint
+            
             if part_upper.startswith("FOREIGN KEY"):
                 fk_match = re.match(
                     r'FOREIGN\s+KEY\s*\(\s*(\w+)\s*\)\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)'
@@ -1080,13 +1009,11 @@ class QueryProcessor:
                         "on_delete": (fk_match.group(4) or "restrict").lower()
                     })
                 continue
-
-            # Column definition
+            
             col_def = self._parse_column_definition(part)
             if col_def:
                 columns.append(col_def)
-
-        # Apply table-level constraints to columns
+        
         for constraint in table_constraints:
             if constraint["type"] == "primary_key":
                 for col_name in constraint["columns"]:
@@ -1108,7 +1035,6 @@ class QueryProcessor:
         }
 
     def _split_column_defs(self, col_defs_str: str) -> List[str]:
-        """Split column definitions by comma, handling nested parentheses."""
         parts = []
         current = ""
         depth = 0
@@ -1130,19 +1056,16 @@ class QueryProcessor:
             parts.append(current.strip())
 
         return parts
-
-    def _parse_column_definition(self, col_def: str) -> dict:
-        """Parse a single column definition."""
-        import re
-
-        # Pattern: col_name TYPE[(length)] [PRIMARY KEY] [REFERENCES table(col) [ON DELETE action]]
+    
+    def _parse_column_definition(self, col_def: str) -> dict:        
+        # col_name TYPE[(length)] [PRIMARY KEY] [REFERENCES table(col) [ON DELETE action]]
         pattern = re.compile(
             r'^(\w+)\s+'  # column name
             r'(INT|INTEGER|FLOAT|CHAR|VARCHAR)'  # type
-            r'(?:\s*\(\s*(\d+)\s*\))?'  # optional length
-            r'(\s+PRIMARY\s+KEY)?'  # optional inline PRIMARY KEY
-            r'(?:\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)'  # optional REFERENCES
-            r'(?:\s+ON\s+DELETE\s+(CASCADE|RESTRICT))?)?',  # optional ON DELETE
+            r'(?:\s*\(\s*(\d+)\s*\))?'  #  length
+            r'(\s+PRIMARY\s+KEY)?'  # PRIMARY KEY
+            r'(?:\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)'  # REFERENCES
+            r'(?:\s+ON\s+DELETE\s+(CASCADE|RESTRICT))?)?',  # ON DELETE
             re.IGNORECASE
         )
 
@@ -1167,12 +1090,10 @@ class QueryProcessor:
             "type": col_type,
             "length": length
         }
-
-        # Inline PRIMARY KEY
+        
         if match.group(4):
             column["primary_key"] = True
-
-        # Inline FOREIGN KEY (REFERENCES)
+        
         if match.group(5):
             column["foreign_key"] = {
                 "table": match.group(5),
@@ -1183,12 +1104,6 @@ class QueryProcessor:
         return column
 
     def _create_table(self, node) -> Rows:
-        """
-        Handle CREATE TABLE with PRIMARY KEY and FOREIGN KEY constraints.
-        """
-        # First, try to get raw query and parse it ourselves for constraint support
-        # This is needed because Query Optimizer doesn't fully parse constraints
-
         table_name = None
         column_defs_node = None
 
@@ -1202,9 +1117,9 @@ class QueryProcessor:
             return Rows(data=[], rows_count=0, message="Invalid CREATE TABLE syntax")
 
         columns = []
-        table_pk_columns = []  # For table-level PRIMARY KEY
-        table_fk_constraints = []  # For table-level FOREIGN KEY
-
+        table_pk_columns = []
+        table_fk_constraints = []
+        
         for col_def in column_defs_node.childs:
             if col_def.type == QueryTypes.COLUMN_DEF:
                 col_name = col_def.val
@@ -1224,17 +1139,16 @@ class QueryProcessor:
                     "name": col_name,
                     "type": type_name,
                     "length": length
-                }
-                # Check for inline constraints in child nodes
+                }                  
                 for constraint_node in col_def.childs[1:]:
                     if hasattr(constraint_node, 'type'):
                         if constraint_node.type == QueryTypes.PRIMARY_KEY_CONSTRAINT or \
                            (hasattr(constraint_node, 'val') and str(constraint_node.val).upper() == "PRIMARY KEY"):
                             column["primary_key"] = True
                         elif constraint_node.type == QueryTypes.FOREIGN_KEY_CONSTRAINT or \
-                                (hasattr(constraint_node, 'val') and "REFERENCES" in str(constraint_node.val).upper()):
-                            # Parse REFERENCES from inline FK constraint
-                            # Structure: childs[0] = REFERENCES_TABLE, childs[1] = REFERENCES_COLUMN, childs[2] = ON DELETE action
+                             (hasattr(constraint_node, 'val') and "REFERENCES" in str(constraint_node.val).upper()):
+                            
+                            # childs[0] = REFERENCES_TABLE, childs[1] = REFERENCES_COLUMN, childs[2] = ON DELETE action
                             if hasattr(constraint_node, 'childs') and constraint_node.childs:
                                 ref_table_node = constraint_node.childs[0] if len(
                                     constraint_node.childs) > 0 else None
@@ -1280,14 +1194,12 @@ class QueryProcessor:
                         "ref_column": ref_col,
                         "on_delete": on_delete
                     })
-
-        # Apply table-level PRIMARY KEY
+        
         for pk_col in table_pk_columns:
             for col in columns:
                 if col["name"].lower() == pk_col.lower():
                     col["primary_key"] = True
-
-        # Apply table-level FOREIGN KEY
+        
         for fk in table_fk_constraints:
             for col in columns:
                 if col["name"].lower() == fk["column"].lower():
@@ -1296,30 +1208,26 @@ class QueryProcessor:
                         "column": fk["ref_column"],
                         "on_delete": fk["on_delete"]
                     }
-
-        # Validate foreign key references exist
+        
+        # Validate foreign key references
         for col in columns:
             if col.get("foreign_key"):
                 fk = col["foreign_key"]
                 ref_table = fk["table"]
                 ref_column = fk["column"]
-
-                # Check if referenced table exists
+                
                 try:
                     ref_schema_file = self.storage_manager._get_schema_path(
                         ref_table)
                     with open(ref_schema_file, "rb") as f:
-                        ref_schema = self.storage_manager.serializer.deserialize_schema(
-                            f.read())
-
-                    # Check if referenced column exists and is primary key
+                        ref_schema = self.storage_manager.serializer.deserialize_schema(f.read())
+                    
                     ref_col_found = False
                     for ref_col in ref_schema["columns"]:
                         if ref_col["name"].lower() == ref_column.lower():
                             ref_col_found = True
                             if not ref_col.get("primary_key", False):
-                                # Warning: referenced column is not a primary key
-                                # For now, just continue (some DBs allow this)
+                                # biarin aja
                                 pass
                             break
 
@@ -1338,8 +1246,7 @@ class QueryProcessor:
         try:
             self._validate_ccm(table_name, "write")
             self.storage_manager.write_table(table_name, schema)
-
-            # Build success message with constraint info
+            
             pk_cols = [c["name"] for c in columns if c.get("primary_key")]
             fk_cols = [c["name"] for c in columns if c.get("foreign_key")]
 
@@ -1378,14 +1285,11 @@ class QueryProcessor:
 
         try:
             self._validate_ccm(table_name, "write")
-            # Check for dependent tables (other tables that reference this table via FK)
             dependent_tables = self._find_dependent_tables(table_name)
 
             if dependent_tables:
-                # Check if any dependent table with RESTRICT has actual referencing rows
                 for dep_table, dep_info in dependent_tables:
                     if dep_info["on_delete"] == "restrict":
-                        # Check if there are actual rows in the dependent table referencing this table
                         try:
                             dr = DataRetrieval(table=dep_table, column=[
                                                dep_info["fk_column"]], conditions=[])
@@ -1394,29 +1298,20 @@ class QueryProcessor:
                                 return Rows(data=[], rows_count=0,
                                             message=f"Error: Cannot drop table '{table_name}' - {dep_rows.rows_count} row(s) in table '{dep_table}' reference this table")
                         except Exception as e:
-                            print(
-                                f"[QP] Warning: Error checking dependent table {dep_table}: {e}")
-
-                # Handle CASCADE: Drop dependent tables first or remove FK constraints
-                # For simplicity, we'll just warn about dependent tables with CASCADE
-                cascade_tables = [
-                    t for t, info in dependent_tables if info["on_delete"] == "cascade"]
+                            print(f"[QP] Warning: Error checking dependent table {dep_table}: {e}")
+                
+                # CASCADE
+                cascade_tables = [t for t, info in dependent_tables if info["on_delete"] == "cascade"]
                 if cascade_tables:
-                    # Delete all rows in dependent tables that reference this table
                     for dep_table, dep_info in dependent_tables:
                         if dep_info["on_delete"] == "cascade":
-                            # Read all data from the table being dropped
                             try:
-                                dr = DataRetrieval(
-                                    table=table_name, column=[], conditions=[])
-                                parent_rows = self.storage_manager.read_block(
-                                    dr)
-                                # For each parent row, delete referencing rows in dependent table
+                                dr = DataRetrieval(table=table_name, column=[], conditions=[])
+                                parent_rows = self.storage_manager.read_block(dr)
                                 for parent_row in parent_rows.data:
                                     parent_pk_value = self._get_case_insensitive(
                                         parent_row, dep_info["ref_column"], value_only=True)
                                     if parent_pk_value is not None:
-                                        # Delete rows in dependent table where FK = parent PK
                                         del_conditions = [Condition(
                                             column=dep_info["fk_column"],
                                             operation="=",
@@ -1442,14 +1337,7 @@ class QueryProcessor:
         except Exception as e:
             return Rows(data=[], rows_count=0, message=f"Error dropping table: {str(e)}")
 
-    def _find_dependent_tables(self, table_name: str) -> List[tuple]:
-        """
-        Find all tables that have foreign keys referencing the given table.
-        Returns list of (table_name, fk_info) tuples.
-        """
-        import os
-        import glob
-
+    def _find_dependent_tables(self, table_name: str) -> List[tuple]:       
         dependent_tables = []
         data_dir = self.storage_manager.data_dir or self.storage_manager.DATA_FOLDER
         schema_pattern = os.path.join(data_dir, "*_schema.dat")
@@ -1457,14 +1345,11 @@ class QueryProcessor:
         for schema_file in glob.glob(schema_pattern):
             try:
                 with open(schema_file, "rb") as f:
-                    schema = self.storage_manager.serializer.deserialize_schema(
-                        f.read())
-
-                # Skip the table being dropped
+                    schema = self.storage_manager.serializer.deserialize_schema(f.read())
+                
                 if schema["table_name"].lower() == table_name.lower():
                     continue
-
-                # Check each column for FK referencing our table
+                
                 for col in schema["columns"]:
                     if col.get("foreign_key"):
                         fk = col["foreign_key"]
@@ -1480,30 +1365,23 @@ class QueryProcessor:
         return dependent_tables
 
     def _validate_fk_on_insert(self, schema_dict: dict, new_row: dict) -> Optional[str]:
-        """
-        Validate foreign key constraints when inserting a new row.
-        Returns error message if FK constraint is violated, None if OK.
-        """
         for col in schema_dict["columns"]:
             if col.get("foreign_key"):
                 fk = col["foreign_key"]
                 fk_column = col["name"]
                 ref_table = fk["table"]
                 ref_column = fk["column"]
-
-                # Get the FK value from the new row
+                
                 fk_value = new_row.get(fk_column)
                 if fk_value is None:
-                    # Try case-insensitive lookup
                     for k, v in new_row.items():
                         if k.lower() == fk_column.lower():
                             fk_value = v
                             break
 
                 if fk_value is None:
-                    continue  # No value provided, skip validation
-
-                # Check if the referenced value exists in the parent table
+                    continue  # skip validation
+                
                 try:
                     conditions = [
                         Condition(column=ref_column, operation="=", operand=fk_value)]
@@ -1518,54 +1396,41 @@ class QueryProcessor:
                     return f"Foreign key constraint error: Referenced table '{ref_table}' does not exist"
                 except Exception as e:
                     return f"Foreign key constraint error: {str(e)}"
-
-        return None  # All FK constraints satisfied
+        
+        return None
 
     def _handle_fk_on_delete(self, table: str, rows_to_delete: List[dict]) -> Optional[str]:
-        """
-        Handle foreign key constraints when deleting rows from a parent table.
-        - RESTRICT: Prevent delete if child rows exist
-        - CASCADE: Delete child rows automatically
-        Returns error message if RESTRICT blocks delete, None if OK.
-        """
         if not rows_to_delete:
             return None
-
-        # Get schema of the table being deleted from
+        
         try:
             schema_file = self.storage_manager._get_schema_path(table)
             with open(schema_file, "rb") as f:
                 schema = self.storage_manager.serializer.deserialize_schema(
                     f.read())
         except FileNotFoundError:
-            return None  # Table doesn't exist, nothing to check
-
-        # Find primary key columns
-        pk_columns = [col["name"]
-                      for col in schema["columns"] if col.get("primary_key", False)]
+            return None
+        
+        pk_columns = [col["name"] for col in schema["columns"] if col.get("primary_key", False)]
         if not pk_columns:
             pk_columns = [schema["columns"][0]["name"]]
-
-        # Find all tables that reference this table via FK
+        
         dependent_tables = self._find_dependent_tables(table)
         if not dependent_tables:
-            return None  # No dependent tables
-
+            return None
+        
         for row in rows_to_delete:
-            # Get PK value(s) from the row being deleted
             for pk_col in pk_columns:
                 pk_value = self._get_case_insensitive(
                     row, pk_col, value_only=True)
 
                 if pk_value is None:
                     continue
-
-                # Check each dependent table
+                
                 for dep_table, dep_info in dependent_tables:
                     fk_column = dep_info["fk_column"]
                     on_delete = dep_info.get("on_delete", "restrict")
-
-                    # Check if any child rows reference this PK value
+                    
                     try:
                         conditions = [
                             Condition(column=fk_column, operation="=", operand=pk_value)]
@@ -1578,7 +1443,6 @@ class QueryProcessor:
                                 return f"Foreign key constraint violation: Cannot delete from '{table}' - " \
                                     f"{child_rows.rows_count} row(s) in table '{dep_table}' reference this record"
                             elif on_delete == "cascade":
-                                # Delete child rows
                                 dd = DataDeletion(table=dep_table, conditions=conditions,
                                                   transaction_id=self.current_transaction_id)
                                 deleted_count = self.storage_manager.delete_block(
@@ -1589,8 +1453,8 @@ class QueryProcessor:
                         print(
                             f"[QP] Warning: Error checking FK constraint on {dep_table}: {e}")
                         continue
-
-        return None  # All FK constraints handled
+        
+        return None
 
     # evaluasi kondisi
 
@@ -1616,8 +1480,6 @@ class QueryProcessor:
                     f"Column '{right_child.val}' does not exist in query result")
 
     def _apply_condition(self, rows: Rows, node) -> Rows:
-        """Apply a condition node to filter rows"""
-
         if not rows.data or node.type != QueryTypes.OPERATOR:
             return rows
 
@@ -1632,29 +1494,26 @@ class QueryProcessor:
         if not node or node.type != QueryTypes.OPERATOR or not node.val:
             return []
 
-        # Logical operators (AND/OR) - recursively extract from children
+        # Logical operators
         if node.val in ["AND", "OR"]:
             conditions = []
             for child in node.childs:
                 conditions.extend(self._extract_conditions(child))
             return conditions
 
-        # Comparison operators (=, <>, >, etc.)
+        # Comparison operators
         if len(node.childs) < 2:
             return []
 
         left_child = node.childs[0]
         right_child = node.childs[1]
 
-        # Extract column name and normalize to lowercase for Storage Manager
-        col = left_child.val if left_child.type == QueryTypes.COLUMN else str(
-            left_child.val)
-
-        # Handle qualified column names (table.column) - extract just the column part
+        # Extract column name and normalize
+        col = left_child.val if left_child.type == QueryTypes.COLUMN else str(left_child.val)
+        
         if '.' in col:
             col = col.split('.')[-1]
-
-        # Normalize to lowercase for consistency with Storage Manager
+        
         col = col.lower()
 
         op = node.val
@@ -1674,7 +1533,7 @@ class QueryProcessor:
         if not node or node.type != QueryTypes.OPERATOR:
             return True
 
-        # handle logical operators recursively
+        # handle logical operators
         if node.val == "AND":
             return all(self._evaluate_condition_node(row, child) for child in node.childs)
         elif node.val == "OR":
@@ -1688,38 +1547,22 @@ class QueryProcessor:
         right_child = node.childs[1]
         op = node.val
 
-        # get left value (column or literal)
+        # left value
         if left_child.type == QueryTypes.COLUMN:
             left_val = row.get(left_child.val)
         else:
             left_val = left_child.val
 
-        # get right value (column or literal)
+        # right value
         if right_child.type == QueryTypes.COLUMN:
             right_val = row.get(right_child.val)
         else:
             right_val = right_child.val
 
-        # use storage manager's evaluation logic for consistency
         condition = Condition(column="", operation=op, operand=right_val)
         return self.storage_manager._evaluate_condition(left_val, condition)
 
     # utils
-
-    def _is_write_query(self, query: str) -> bool:
-
-        if not query:
-            return False
-        first_word = query.strip().split(" ")[0].upper()
-        write_types = [
-            QueryTypes.UPDATE,
-            QueryTypes.INSERT,
-            QueryTypes.DELETE,
-            QueryTypes.CREATE_TABLE,
-            QueryTypes.DROP_TABLE
-        ]
-        return first_word in write_types
-
     def _qualify_columns(self, table_name: str, rows_data: List[dict]) -> List[dict]:
 
         # table name prefix untuk nama kolom (cross join)
