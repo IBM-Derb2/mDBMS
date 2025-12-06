@@ -10,7 +10,7 @@ from Concurrency_Control_Manager.lib.transaction_model import TransactionManager
 from Concurrency_Control_Manager.lib.transaction_coordinator import TransactionCoordinator
 from Concurrency_Control_Manager.lib.deadlock_detector import DeadlockDetector
 from Concurrency_Control_Manager.lib.transaction_id_generator import TransactionIdGenerator
-from Failure_Recovery.types import WalAction
+from Failure_Recovery.frm_types import WalAction, WalType, RecoverCriteria, LogEntry
 
 
 class ConcurrencyControlManager:
