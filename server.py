@@ -61,7 +61,6 @@ class Server:
             optimizer=self.optimizer,
             storage_manager=self.storage,
             cc_manager=self.cc_manager,
-            fr_manager=self.frm
         )
 
         self.server_socket = None

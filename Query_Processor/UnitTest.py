@@ -15,11 +15,13 @@ from Failure_Recovery.failure_recovery_manager import FailureRecoveryManager
 
 class TestQueryProcessor(unittest.TestCase):
 
+    DATA_DIR = "Query_Processor"
+
     @classmethod
     def setUpClass(cls):
         cls.optimizer_engine = OptimizationEngine()
         cls.serializer = Serializer()
-        cls.storage_engine = StorageEngine(serializer=cls.serializer)
+        cls.storage_engine = StorageEngine(data_dir=cls.DATA_DIR, serializer=cls.serializer)
         
         cls.buffer_manager = BufferManager(capacity=100)
         cls.frm = FailureRecoveryManager(
@@ -39,7 +41,6 @@ class TestQueryProcessor(unittest.TestCase):
             optimizer=self.optimizer_engine,
             storage_manager=self.storage_engine,
             cc_manager=self.ccm,
-            fr_manager=self.frm
         )
 
     def test_01_empty_query(self):
@@ -235,6 +236,7 @@ class TestQueryProcessor(unittest.TestCase):
         result = self.qp.execute_query(query)
         self.assertGreater(len(result[0].message), 0)
         self.assertTrue(any(word in result[0].message.lower() for word in ['error', 'invalid', 'unhandled']))
+
     def test_22_insert_rows(self):
         """Test INSERT data persistence"""
 
@@ -250,7 +252,7 @@ class TestQueryProcessor(unittest.TestCase):
             self.assertEqual(select_result[0].data.data[0]["fullname"], "InsertVerify")
             self.assertEqual(select_result[0].data.data[0]["gpa"], 3.8)
 
-    def test_23_update_rows(self):
+    def test_23a_update_rows(self):
         """Test UPDATE with arithmetic expression using record from test_21"""
 
         unique_id = 99999
@@ -263,6 +265,23 @@ class TestQueryProcessor(unittest.TestCase):
         select_result = self.qp.execute_query(verify_query)
         if select_result[0].rows_count > 0:
             self.assertAlmostEqual(select_result[0].data.data[0]["gpa"], 4.18, places=1)
+
+    def test_23b_multi_column_update(self):
+        """Test UPDATE with multiple columns"""
+
+        unique_id = 99999
+
+        # Update multiple columns: FullName and GPA
+        query = f"UPDATE student SET FullName = 'MultiUpdateTest', GPA = 3.5 WHERE StudentID = {unique_id};"
+        update_result = self.qp.execute_query(query)
+        self.assertEqual(update_result[0].rows_count, 1)
+
+        verify_query = f"SELECT * FROM student WHERE StudentID = {unique_id};"
+        select_result = self.qp.execute_query(verify_query)
+        if select_result[0].rows_count > 0:
+            self.assertEqual(select_result[0].data.data[0]["fullname"], "MultiUpdateTest")
+            self.assertEqual(select_result[0].data.data[0]["gpa"], 3.5)
+
     def test_24_delete_rows(self):
         """Test DELETE data removal using record from test_22"""
 

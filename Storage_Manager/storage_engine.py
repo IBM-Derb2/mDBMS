@@ -373,26 +373,44 @@ class StorageEngine:
 
             for i, row in enumerate(merged_rows):
                 if self._matches_conditions(row, data_write.conditions):
-                    target_col = data_write.column[0]
-                    if target_col not in row:
-                        continue
-
-                    old_values = {target_col: row.get(target_col)}
-
                     updated_row = row.copy()
-
-                    if isinstance(data_write.new_value, list):
-                        # handle arithmetic expressions: ['GPA', '*', 1.1]
-                        try:
-                            calc_value = self._evaluate_expression(
-                                data_write.new_value, row)
-                        except Exception:
+                    old_values = {}
+                    modified_columns = set()
+                    
+                    # Process all columns and their corresponding values
+                    for col_idx, target_col in enumerate(data_write.column):
+                        if target_col not in row:
                             continue
-
-                        coerced_value = self._coerce_type(calc_value, expected_type, col_type)
-                        updated_row[target_col] = coerced_value
-                    else:
-                        coerced_value = self._coerce_type(data_write.new_value, expected_type, col_type)
+                        
+                        old_values[target_col] = row.get(target_col)
+                        modified_columns.add(target_col)
+                        
+                        # Get the column type from schema
+                        col_schema = next(
+                            (c for c in schema_dict["columns"] if c["name"] == target_col), None)
+                        if not col_schema:
+                            continue
+                            
+                        col_type = col_schema["type"]
+                        expected_type = self.TYPE_MAPPING.get(col_type)
+                        
+                        # Get the corresponding value
+                        if col_idx < len(data_write.new_value):
+                            new_val = data_write.new_value[col_idx]
+                        else:
+                            continue
+                        
+                        # Handle both expressions and literals
+                        if isinstance(new_val, list):
+                            # handle arithmetic expressions: ['GPA', '*', 1.1]
+                            try:
+                                calc_value = self._evaluate_expression(new_val, row)
+                            except Exception:
+                                continue
+                            coerced_value = self._coerce_type(calc_value, expected_type, col_type)
+                        else:
+                            coerced_value = self._coerce_type(new_val, expected_type, col_type)
+                        
                         updated_row[target_col] = coerced_value
 
                     pk_value_dict = {pk_col: updated_row.get(pk_col) for pk_col in pk_columns}

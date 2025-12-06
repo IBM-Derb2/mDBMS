@@ -102,7 +102,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>-</td>
+        <td>Laporan</td>
     </tr>
     <tr align="left">
         <td>13523118</td>
@@ -115,7 +115,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Integrasi program</td>
+        <td>Inisialisasi program, Integrasi program, fungsi execute_query, fungsi meng-handle query DML, debugging, testing</td>
     </tr>
     <tr align="left">
         <td>13523022</td>
@@ -128,7 +128,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Integrasi program</td>
+        <td>Integrasi program, fungsi meng-handle transaction, fungsi memproses node query join, debugging, testing, laporan</td>
     </tr>
     <tr align="left">
         <td>13523060</td>
@@ -141,7 +141,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, Debugging</td>
+        <td>Integrasi program, fungsi memproses node query select, fungsi meng-handle kondisi from, debugging, testing, laporan</td>
     </tr>
     <tr align="left">
         <td>13523112</td>
@@ -154,7 +154,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan, Debugging</td>
+        <td>Kelas diagram, integrasi program, fungsi meng-handle rollback, fungsi meng-handle commit, debugging, testing, laporan</td>
     </tr>
 </table>
 
