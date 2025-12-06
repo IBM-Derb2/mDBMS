@@ -1,4 +1,10 @@
 # Mini DBMS by IBM Derb2
+> Yes, mDBMS from scratch.
+> 
+<br>
+<p align="center">
+    <img width="600px" src="https://github.com/user-attachments/assets/9eb1b38b-474c-4197-8754-d137893dd712">
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white" alt="Python"/>
@@ -6,18 +12,28 @@
   <img src="https://img.shields.io/badge/Custom-module-orange?logo=gear&logoColor=white" alt="Custom"/>
 </p>
 
-## Table of Contents
+---
+
+# Table of Contents <a name="table-of-contents"></a>
 
 - [Description](#description)
 - [Technology](#technology)
-- [Features](#features)
 - [Requirements](#requirements)
-- [Running the mDBMS](#Running-the-mdbms)
+- [Running the mDBMS](#running-the-mdbms)
 - [Creators](#creators)
+---
+
+# The mDBMS <a name="mdbms"></a>
+
+<div align="center">
+
+<img src="https://github.com/user-attachments/assets/a8dfe803-cacc-4598-a323-315b41b5033a" width="100%" alt="cover">
+
+</div>
 
 ---
 
-# Description
+# Description <a name="description"></a>
 
 This project is a mini Database Management System (DBMS) implemented with Python with the following functionalities:
 
@@ -171,14 +187,14 @@ Ensures database consistency and durability through crash recovery and transacti
 
 ---
 
-# Technology
+# Technology <a name="technology"></a>
 
 - **Python 3.10+**
 - Uses only **standard Python libraries** (no external dependencies)
 
 ---
 
-# Requirements
+# Requirements <a name="requirements"></a>
 
 - **Python 3.10 or higher** installed
 - A terminal or command prompt to run the scripts
@@ -186,7 +202,7 @@ Ensures database consistency and durability through crash recovery and transacti
 
 ---
 
-# Running the mDBMS
+# Running the mDBMS <a name="running-the-mdbms"></a>
 
 1. Make executable scripts
 
@@ -234,9 +250,11 @@ Ensures database consistency and durability through crash recovery and transacti
 
 ---
 
-# Creators
+# Creators <a name="creators"></a>
 
-## Super Group IBM Derb2
+### <p align="center"><i>~ Super Group IBM Derb2 ~</i></p>
+
+<br>
 
 ### Swift Group - Query Processor
 
