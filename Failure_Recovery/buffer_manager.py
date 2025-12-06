@@ -37,6 +37,8 @@ class BufferManager:
 
     def read_block(self, table_name: str, pk_value: Dict[str, Any]) -> BufferedRow:
         """Fetch block from buffer (cache hit) or load from disk (cache miss)"""
+        # normalize
+        pk_value = {k.lower(): v for k, v in pk_value.items()}
         key = self._get_buffer_key(table_name, pk_value)
         pk_str = str(pk_value)
 
@@ -70,6 +72,9 @@ class BufferManager:
 
     def write_block(self, transaction_id: int, table_name: str, pk_value: Dict[str, Any], new_data: dict):
         """Write to buffer, log to WAL, mark dirty"""
+        # normalize
+        pk_value = {k.lower(): v for k, v in pk_value.items()}
+        new_data = {k.lower(): v for k, v in new_data.items()}
         key = self._get_buffer_key(table_name, pk_value)
         
         if key not in self.buffer_data:
@@ -101,6 +106,9 @@ class BufferManager:
 
     def delete_block(self, transaction_id: int, table_name: str, pk_value: Dict[str, Any], old_data: dict):
         """Mark block as deleted (tombstone), log to WAL"""
+        # normalize
+        pk_value = {k.lower(): v for k, v in pk_value.items()}
+        old_data = {k.lower(): v for k, v in old_data.items()}
         key = self._get_buffer_key(table_name, pk_value)
         
         if key not in self.buffer_data:
