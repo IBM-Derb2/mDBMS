@@ -115,7 +115,7 @@ class QueryProcessor:
         if query_upper == "ROLLBACK" or query_upper == "ABORT":
             return [self._handle_rollback(query, client_address)]
 
-        if query_upper.startswith("SET CONCURRENCY"):
+        if query_upper.startswith("SET CONCURRENCY") and query_upper.endswith(";"):
             return [self._handle_set_concurrency(query, client_address)]
 
         if explicit_transaction:
