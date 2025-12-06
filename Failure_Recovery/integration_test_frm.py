@@ -336,7 +336,7 @@ class TestFailureRecoveryIntegration(unittest.TestCase):
         
         # Verify
         self.assertTrue(stats['checkpoint_found'])
-        self.assertIn(tx2, stats['checkpoint_transactions'])
+        self.assertIn(str(tx2), stats['checkpoint_transactions'])
         self.assertGreater(stats['redo_count'], 0)
         self.assertGreater(stats['undo_count'], 0)
         
