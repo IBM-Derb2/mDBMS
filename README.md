@@ -314,7 +314,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Laporan dan testing.</td>
+        <td>Bagian model log parser dan log entry, recovery, logika rollback, unit testing, laporan bagian testing dan penjelasan</td>
     </tr>
     <tr align="left">
         <td>13523016</td>
@@ -327,7 +327,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Diagram kelas dan laporan.</td>
+        <td>Bagian buffer manager dan implementasi aturan write ahead log di buffer manager, diagram kelas, dan laporan</td>
     </tr>
     <tr align="left">
         <td>13523102</td>
@@ -340,7 +340,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Integrasi dengan storage manager, clear WAL logic</td>
+        <td>Save checkpoint, Integrasi dengan storage manager, clear WAL logic, testing, dan laporan</td>
     </tr>
     <tr align="left">
         <td>13523042</td>
@@ -353,7 +353,7 @@ This project is a mini Database Management System (DBMS) implemented with Python
             </a><br/>
             </div>
         </td>
-        <td>Integrasi menjadi satu kelas, testing dan ubah bagian buffer manager dan recovery.</td>
+        <td>Integrasi menjadi satu kelas, testing dan refactor buffer manager dan recovery, integrasi dengan komponen lain dan laporan</td>
     </tr>
 </table>
 
