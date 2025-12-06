@@ -42,11 +42,10 @@ class QueryProcessor:
     CCM_RETRY_DELAY = 0.1
     DEBUG = True  # Set to True to print full tracebacks
 
-    def __init__(self, optimizer, storage_manager, cc_manager, fr_manager):
+    def __init__(self, optimizer, storage_manager, cc_manager):
         self.optimizer = optimizer
         self.storage_manager = storage_manager
         self.cc_manager = cc_manager
-        self.fr_manager = fr_manager
 
         # Per-client session tracking: key = "ip:port", value = ClientSession
         self.client_sessions = {}
@@ -107,13 +106,13 @@ class QueryProcessor:
 
         query_upper = query.upper().strip()
 
-        if query_upper.startswith("BEGIN"):
+        if query_upper.upper == "BEGIN" or query_upper == "BEGIN TRANSACTION":
             return [self._handle_begin_transaction(query, client_address)]
 
-        if query_upper.startswith("COMMIT"):
+        if query_upper == "COMMIT":
             return self._handle_commit(query, client_address)
 
-        if query_upper.startswith("ROLLBACK") or query_upper.startswith("ABORT"):
+        if query_upper == "ROLLBACK" or query_upper == "ABORT":
             return [self._handle_rollback(query, client_address)]
 
         if query_upper.startswith("SET CONCURRENCY"):
@@ -1561,7 +1560,16 @@ class QueryProcessor:
         left_child = node.childs[0]
         right_child = node.childs[1]
 
+        # Extract column name and normalize to lowercase for Storage Manager
         col = left_child.val if left_child.type == QueryTypes.COLUMN else str(left_child.val)
+        
+        # Handle qualified column names (table.column) - extract just the column part
+        if '.' in col:
+            col = col.split('.')[-1]
+        
+        # Normalize to lowercase for consistency with Storage Manager
+        col = col.lower()
+        
         op = node.val
         val = right_child.val
 

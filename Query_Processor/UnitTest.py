@@ -41,7 +41,6 @@ class TestQueryProcessor(unittest.TestCase):
             optimizer=self.optimizer_engine,
             storage_manager=self.storage_engine,
             cc_manager=self.ccm,
-            fr_manager=self.frm
         )
 
     def test_01_empty_query(self):
