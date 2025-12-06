@@ -640,8 +640,8 @@ class StorageEngine:
             schema = self.serializer.deserialize_schema(schema_bin)
 
             with open(data_path, "rb") as f:
-                existing_data_bin = f.read()
-            existing_rows = self.serializer.deserialize_with_blocks(
+                existing_data_bin = f.read()            
+                existing_rows = self.serializer.deserialize_with_blocks(
                 existing_data_bin, schema["columns"])
 
             pk_columns = [col["name"] for col in schema["columns"]
@@ -651,19 +651,25 @@ class StorageEngine:
 
             buffer_rows_map = {}
             for row in table.data:
-                pk_tuple = tuple(row.get(pk_col) for pk_col in pk_columns)
+                # Normalize to lowercase for consistent comparison
+                pk_tuple = tuple(row.get(pk_col.lower(), row.get(pk_col)) for pk_col in pk_columns)
                 buffer_rows_map[pk_tuple] = row
 
             # Get deleted keys from buffer (if available)
-            deleted_keys = set(table.deleted_keys)
+            # deleted_keys contains tuples of PK values
+            deleted_keys_set = set()
+            for dk in table.deleted_keys:
+                # dk is already a tuple of values
+                deleted_keys_set.add(dk)
 
             # merge buffer dengan disk atau tulis ulang
             merged_rows = []
             for existing_row in existing_rows:
-                pk_tuple = tuple(existing_row.get(pk_col)
+                # Normalize to lowercase for consistent comparison
+                pk_tuple = tuple(existing_row.get(pk_col.lower(), existing_row.get(pk_col))
                                  for pk_col in pk_columns)
                 # Skip rows that were deleted in buffer
-                if pk_tuple in deleted_keys:
+                if pk_tuple in deleted_keys_set:
                     continue
                 if pk_tuple in buffer_rows_map:
                     merged_rows.append(buffer_rows_map[pk_tuple])

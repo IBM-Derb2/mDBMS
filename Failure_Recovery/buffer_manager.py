@@ -3,9 +3,10 @@ from .frm_types import BufferedRow, BUFFER_CAPACITY
 
 
 class TableWrapper:
-    def __init__(self, name, data):
+    def __init__(self, name, data, deleted_keys=None):
         self.name = name
         self.data = data
+        self.deleted_keys = deleted_keys or []
 
 class BufferManager:
     def __init__(self, capacity: int = BUFFER_CAPACITY):
@@ -163,8 +164,8 @@ class BufferManager:
                     current_disk_data = table_obj.data
             except:
                 pass # Tabel baru
-            
             final_rows = []
+            deleted_keys = []  # Track deleted row PKs
             buffer_updates = [r for r in dirty_rows if r.table_name == t_name]
             processed_buffer_keys = set()
             for disk_row in current_disk_data:
@@ -184,6 +185,8 @@ class BufferManager:
                         if buf_row.is_deleted:
                             # Row is deleted, don't include in final_rows
                             should_keep = False
+                            # Add to deleted_keys for disk cleanup
+                            deleted_keys.append(tuple(buf_row.primary_key_value.get(k) for k in sorted(buf_row.primary_key_value.keys())))
                         else:
                             # Row is updated, use buffer version
                             updated_row = buf_row.data
@@ -204,7 +207,7 @@ class BufferManager:
                     # Deleted rows are not written to disk
                     buf_row.is_dirty = False
 
-            self.tables.append(TableWrapper(t_name, final_rows))
+            self.tables.append(TableWrapper(t_name, final_rows, deleted_keys))
         self.save_buffer_callback(self)
         print(f"[Buffer] Flush & Merge selesai. Tabel: {list(dirty_table_names)}")
         self.tables = []
