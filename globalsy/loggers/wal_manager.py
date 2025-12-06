@@ -366,7 +366,9 @@ class WALManager:
 
     def _parse_line(self, line: str):
         """Parse a log line into LogEntry"""
-
+        line = line.strip()
+        if not line:
+            return None
         try:
 
             d: Dict[str, Any] = json.loads(line)
@@ -426,3 +428,22 @@ class WALManager:
                 # Stop at START (case-insensitive check)
                 if criteria.transaction_id and entry.transaction_id == criteria.transaction_id and entry.action.lower() == "start":
                     return
+    def clear_wal_before_checkpoint(self):
+        """Clear all entries BEFORE the most recent checkpoint"""
+        entries_to_keep = []
+        checkpoint_found = False
+        
+        for entry in self.iter_backward():
+            if entry.raw_log.get("type") == "checkpoint":
+                checkpoint_found = True
+                entries_to_keep.append(entry.raw_log)
+                break
+            entries_to_keep.append(entry.raw_log)
+        
+        if checkpoint_found:
+            entries_to_keep.reverse()
+            with open(self.wal_file, 'w') as f:
+                f.write('')
+            for entry in entries_to_keep:
+                self.write_to_file(json.dumps(entry))
+            print(f"[WAL Clear] Kept {len(entries_to_keep)} entries (checkpoint + after)")
