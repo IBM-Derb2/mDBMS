@@ -898,39 +898,9 @@ class QueryProcessor:
                 if child.childs:
                     conditions = self._extract_conditions(child.childs[0])
 
-        # First, acquire read lock to identify affected rows
-        if conditions:
-            # Acquire read lock on table to read data
-            self._validate_ccm(table, "read")
-
-            # Read current data to identify rows that match conditions
-            dr = DataRetrieval(table=table, column=[], conditions=conditions)
-            affected_rows = self.storage_manager.read_block(dr)
-
-            # Acquire exclusive locks on each affected row
-            if affected_rows.data:
-                # Get primary key column(s)
-                schema_file = self.storage_manager._get_schema_path(table)
-                with open(schema_file, "rb") as f:
-                    schema = f.read()
-                schema_dict = self.storage_manager.serializer.deserialize_schema(
-                    schema)
-                pk_columns = [col["name"] for col in schema_dict["columns"]
-                              if col.get("primary_key", False)]
-                if not pk_columns:
-                    pk_columns = [schema_dict["columns"][0]["name"]]
-
-                # Lock each affected row
-                for row in affected_rows.data:
-                    pk_values = ":".join(
-                        str(row.get(pk_col))
-                        for pk_col in pk_columns
-                    )
-                    row_id = f"{table}:row:{pk_values}"
-                    self._validate_ccm(row_id, "write")
-        else:
-            # No WHERE clause - validate table-level lock (affects all rows)
-            self._validate_ccm(table, "write")
+        # Use table-level locking for UPDATE operations
+        # (Row-level locking causes issues during strategy switching)
+        self._validate_ccm(table, "write")
 
         # Log operation (after validate, before storage)
         if self.current_transaction_id:
@@ -955,39 +925,11 @@ class QueryProcessor:
             if where_node.childs:
                 conditions = self._extract_conditions(where_node.childs[0])
 
-        # First, acquire read lock to identify affected rows
-        if conditions:
-            # Acquire read lock on table to read data
-            self._validate_ccm(table, "read")
-
-            # Read current data to identify rows that match conditions
-            dr = DataRetrieval(table=table, column=[], conditions=conditions)
-            affected_rows = self.storage_manager.read_block(dr)
-
-            # Acquire exclusive locks on each affected row
-            if affected_rows.data:
-                # Get primary key column(s)
-                schema_file = self.storage_manager._get_schema_path(table)
-                with open(schema_file, "rb") as f:
-                    schema = f.read()
-                schema_dict = self.storage_manager.serializer.deserialize_schema(
-                    schema)
-                pk_columns = [col["name"] for col in schema_dict["columns"]
-                              if col.get("primary_key", False)]
-                if not pk_columns:
-                    pk_columns = [schema_dict["columns"][0]["name"]]
-
-                # Lock each affected row
-                for row in affected_rows.data:
-                    pk_values = ":".join(
-                        str(row.get(pk_col))
-                        for pk_col in pk_columns
-                    )
-                    row_id = f"{table}:row:{pk_values}"
-                    self._validate_ccm(row_id, "write")
-        else:
-            # No WHERE clause - validate table-level lock (affects all rows)
-            self._validate_ccm(table, "write")        # Log operation (after validate, before storage)
+        # Use table-level locking for DELETE operations
+        # (Row-level locking causes issues during strategy switching)
+        self._validate_ccm(table, "write")
+        
+        # Log operation (after validate, before storage)
         if self.current_transaction_id:
             self.cc_manager.log_operation(
                 transaction_id=self.current_transaction_id,
