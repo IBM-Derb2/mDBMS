@@ -4,6 +4,7 @@ from math import ceil
 import os
 import glob
 
+from globalsy.classes.rows import Rows
 from .b_plus_tree_index import BPlusTreeIndex
 from .hash_index import HashIndex
 from .serializer import Serializer

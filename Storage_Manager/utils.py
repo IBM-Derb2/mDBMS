@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Literal, Union, Any
 
-from globalsy.classes.rows import Rows
 
 SearchMode = Literal["linear", "index"]
 OperationType = Literal["=", "<>", ">", ">=", "<", "<="]
